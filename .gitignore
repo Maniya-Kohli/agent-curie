@@ -1,0 +1,28 @@
+# Environment & Secrets (NEVER COMMIT THESE!)
+.env
+credentials.json
+token.pickle
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+*.egg-info/
+*.egg
+
+# Sandbox
+sandbox_files/
+
+# Mac
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+bot.log
