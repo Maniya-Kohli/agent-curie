@@ -1,0 +1,44 @@
+{
+  "name": "agent-noni",
+  "version": "1.0.0",
+  "description": "A minimal viable AI agent that runs on Telegram with essential tools and in-memory state management.",
+  "main": "index.js",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts",
+    "test": "tsx src/test.ts",
+    "auth:google": "tsx scripts/authorize-google.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Maniya-Kohli/agent-noni.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Maniya-Kohli/agent-noni/issues"
+  },
+  "homepage": "https://github.com/Maniya-Kohli/agent-noni#readme",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.72.1",
+    "axios": "^1.13.4",
+    "better-sqlite3": "^12.6.2",
+    "chrono-node": "^2.9.0",
+    "date-fns": "^4.1.0",
+    "dotenv": "^17.2.3",
+    "drizzle-orm": "^0.45.1",
+    "googleapis": "^171.3.0",
+    "mathjs": "^15.1.0",
+    "telegraf": "^4.16.3",
+    "uuid": "^13.0.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.2.1",
+    "drizzle-kit": "^0.31.8",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}
