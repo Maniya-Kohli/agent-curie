@@ -1,6 +1,6 @@
 # Noni - Personal AI Assistant
 
-Multi-channel AI agent built with TypeScript, Claude Sonnet 4.5, and OpenClaw architecture patterns.
+AI agent that actually does things
 
 ## Features
 
