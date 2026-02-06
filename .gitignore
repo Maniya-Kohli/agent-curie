@@ -40,3 +40,8 @@ sandbox_files/
 # Logs
 *.log
 bot.log
+
+# Workspace
+workspace/SOUL.md
+workspace/USER.md
+
