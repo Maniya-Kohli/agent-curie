@@ -42,6 +42,5 @@ sandbox_files/
 bot.log
 
 # Workspace
-workspace/SOUL.md
-workspace/USER.md
+workspace
 

@@ -1,4 +1,4 @@
-// src/index.ts - Updated with username passing
+// src/index.ts
 
 import * as dotenv from "dotenv";
 import { ChannelGateway } from "./channels/gateway";
@@ -6,6 +6,7 @@ import { AgentOrchestrator } from "./agent/orchestrator";
 import { NormalizedMessage } from "./channels/base";
 import { logger } from "./utils/logger";
 import { setGatewayForTools } from "./tools";
+import { initializeDatabase } from "./db";
 
 dotenv.config();
 
@@ -18,7 +19,13 @@ async function start() {
     process.exit(1);
   }
 
+  // Initialize database (creates tables if not exist)
+  initializeDatabase();
+
   const agent = new AgentOrchestrator(anthropicKey);
+
+  // Initialize memory system (MEMORY.md, daily logs, search index)
+  await agent.initializeMemory();
 
   const gateway = ChannelGateway.createFromConfig({
     telegram: {
@@ -75,11 +82,10 @@ async function start() {
         message.groupId,
       );
 
-      // Pass username to orchestrator for identity resolution
       const response = await agent.handleUserMessage(
         `${message.channel}:${message.userId}`,
         message.content,
-        message.username, // ← Key addition: pass username
+        message.username,
       );
 
       return response;
@@ -94,7 +100,9 @@ async function start() {
 
   await gateway.startListening(messageHandler);
 
-  logger.success("✅ Noni is Online with Multi-Channel Support");
+  logger.success(
+    "✅ Noni is Online with Multi-Channel Support + Persistent Memory",
+  );
   logger.info(
     `Active channels: ${gateway
       .getStatus()
@@ -104,6 +112,7 @@ async function start() {
 
   const shutdown = async () => {
     logger.warn("Received shutdown signal. Closing channels...");
+    agent.shutdown();
     await gateway.shutdownAll();
     process.exit(0);
   };

@@ -1,23 +1,58 @@
+//
 // src/agent/orchestrator.ts
 
 import { LLMInterface } from "./llm";
 import { memory } from "./memory";
 import { TOOL_DEFINITIONS, TOOL_FUNCTIONS } from "../tools";
 import { ContextManager } from "../memory/contextManager";
-import { FactExtractor } from "../memory/factExtractor";
 import { ChannelGateway } from "../channels/gateway";
+import { indexer } from "../memory/indexer";
+import { memoryFiles } from "../memory/memoryFiles";
 import { logger } from "../utils/logger";
 
 export class AgentOrchestrator {
   private gateway?: ChannelGateway;
   private llm: LLMInterface;
   private contextManager = new ContextManager();
-  private extractor: FactExtractor;
   private maxIterations: number = 10;
+  private reindexInterval?: NodeJS.Timeout;
 
   constructor(apiKey: string) {
     this.llm = new LLMInterface(apiKey);
-    this.extractor = new FactExtractor(this.llm);
+  }
+
+  /**
+   * Initialize memory system: ensure files exist, build search index.
+   */
+  async initializeMemory(): Promise<void> {
+    // Ensure workspace/MEMORY.md exists
+    const memoryContent = memoryFiles.read("MEMORY.md");
+    if (!memoryContent) {
+      memoryFiles.write(
+        "MEMORY.md",
+        `# Memory\n\n## Preferences\n\n## People\n\n## Projects\n\n## Decisions & Context\n`,
+      );
+      logger.info("Created initial MEMORY.md");
+    }
+
+    // Ensure today's daily log exists
+    memoryFiles.ensureDailyLog();
+
+    // Build search index
+    await indexer.indexAll();
+
+    // Periodic re-index every 5 minutes
+    this.reindexInterval = setInterval(
+      async () => {
+        await indexer.reindexDirty();
+      },
+      5 * 60 * 1000,
+    );
+
+    const stats = indexer.getStats();
+    logger.info(
+      `Memory system initialized: ${stats.totalChunks} chunks across ${stats.totalFiles} files`,
+    );
   }
 
   setGateway(gateway: ChannelGateway): void {
@@ -45,7 +80,11 @@ export class AgentOrchestrator {
         `Agent processing message for user ${userId}: "${content.substring(0, 50)}..."`,
       );
 
-      memory.addMessage(userId, "user", content);
+      // Extract channel from userId (format: "channel:id")
+      const channel = userId.includes(":") ? userId.split(":")[0] : undefined;
+
+      // Persist to SQLite + in-memory
+      memory.addMessage(userId, "user", content, channel);
 
       const dynamicSystemPrompt = await this.contextManager.assembleContext(
         userId,
@@ -67,13 +106,9 @@ export class AgentOrchestrator {
 
         if (response.stop_reason === "end_turn") {
           const finalResponse = this.extractTextResponse(response);
-          memory.addMessage(userId, "assistant", finalResponse);
+          memory.addMessage(userId, "assistant", finalResponse, channel);
 
           logger.info(`Final response reached in ${i + 1} iterations`);
-
-          this.extractor
-            .extractAndStoreFacts(userId, conversation)
-            .catch((err) => logger.error("Memory Extraction Error:", err));
 
           return finalResponse;
         }
@@ -139,9 +174,21 @@ export class AgentOrchestrator {
   }
 
   getStats() {
+    const memStats = memory.getStats();
+    const indexStats = indexer.getStats();
     return {
-      model: "claude-3-5-sonnet-20241022",
-      ...memory.getStats(),
+      model: "claude-sonnet-4-5-20250929",
+      ...memStats,
+      memoryIndex: indexStats,
     };
+  }
+
+  /**
+   * Cleanup on shutdown.
+   */
+  shutdown(): void {
+    if (this.reindexInterval) {
+      clearInterval(this.reindexInterval);
+    }
   }
 }
