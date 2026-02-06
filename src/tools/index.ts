@@ -1,3 +1,5 @@
+// src/tools/index.ts
+
 import { Tool } from "@anthropic-ai/sdk/resources";
 import { getWeather } from "./weather";
 import { webSearch } from "./webSearch";
@@ -5,14 +7,19 @@ import { calculate } from "./calculator";
 import { fileOps } from "./fileOps";
 import { GmailTool } from "./gmail";
 import { CalendarTool } from "./calendar";
+import { sendMessage, setGatewayForTools } from "./sendMessage";
+import { directory } from "../memory/directory";
 
-// Initialize class-based tools
 const gmail = new GmailTool();
 const calendar = new CalendarTool();
 
-/**
- * TOOL_DEFINITIONS: The schemas Noni sends to Claude to define capabilities.
- */
+// Build contact list dynamically
+const buildContactList = (): string => {
+  return Array.from(directory.contacts.values())
+    .map((c) => c.aliases.join("/"))
+    .join(", ");
+};
+
 export const TOOL_DEFINITIONS: Tool[] = [
   {
     name: "get_weather",
@@ -26,6 +33,19 @@ export const TOOL_DEFINITIONS: Tool[] = [
         },
       },
       required: ["location"],
+    },
+  },
+  {
+    name: "send_message",
+    description: `Send messages via WhatsApp/Telegram/Discord. Known contacts: ${buildContactList()}. Extract alias from user request.`,
+    input_schema: {
+      type: "object",
+      properties: {
+        channel: { type: "string", enum: ["whatsapp", "telegram", "discord"] },
+        recipient: { type: "string", description: "Contact alias or full ID" },
+        message: { type: "string" },
+      },
+      required: ["channel", "recipient", "message"],
     },
   },
   {
@@ -143,9 +163,6 @@ export const TOOL_DEFINITIONS: Tool[] = [
   },
 ];
 
-/**
- * TOOL_FUNCTIONS: Maps tool names to the actual TypeScript implementation logic.
- */
 export const TOOL_FUNCTIONS: Record<string, Function> = {
   get_weather: (args: { location: string }) => getWeather(args.location),
   web_search: (args: { query: string; numResults?: number }) =>
@@ -158,6 +175,7 @@ export const TOOL_FUNCTIONS: Record<string, Function> = {
     gmail.sendEmail(args.to, args.subject, args.body, args.cc),
   view_events: (args: any) =>
     calendar.viewEvents(args.daysAhead, args.maxResults),
+  send_message: sendMessage,
   create_event: (args: any) =>
     calendar.createEvent(
       args.title,
@@ -168,3 +186,5 @@ export const TOOL_FUNCTIONS: Record<string, Function> = {
       args.attendees,
     ),
 };
+
+export { setGatewayForTools };

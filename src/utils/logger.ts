@@ -43,8 +43,9 @@ class Logger {
     this.writeToFile(formatted);
   }
 
-  warn(msg: string) {
-    const formatted = this.formatMessage(LogLevel.WARN, msg);
+  warn(msg: string, err?: any) {
+    const errorMessage = err ? `${msg} | ${err.message || err}` : msg;
+    const formatted = this.formatMessage(LogLevel.WARN, errorMessage);
     console.warn(this.colorize(LogLevel.WARN, formatted));
     this.writeToFile(formatted);
   }

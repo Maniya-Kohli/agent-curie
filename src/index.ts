@@ -1,111 +1,115 @@
+// src/index.ts - Updated with username passing
+
 import * as dotenv from "dotenv";
-import { Telegraf } from "telegraf";
+import { ChannelGateway } from "./channels/gateway";
 import { AgentOrchestrator } from "./agent/orchestrator";
-import { memory } from "./agent/memory";
+import { NormalizedMessage } from "./channels/base";
 import { logger } from "./utils/logger";
+import { setGatewayForTools } from "./tools";
 
 dotenv.config();
 
 async function start() {
-  logger.info("Initializing Noni TS...");
+  logger.info("Initializing Noni with Multi-Channel Architecture...");
 
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
-  const telegramToken = process.env.TELEGRAM_BOT_TOKEN;
-
-  if (!anthropicKey || !telegramToken) {
-    logger.error("❌ Missing ANTHROPIC_API_KEY or TELEGRAM_BOT_TOKEN in .env");
+  if (!anthropicKey) {
+    logger.error("❌ Missing ANTHROPIC_API_KEY in .env");
     process.exit(1);
   }
 
-  const noni = new AgentOrchestrator(anthropicKey);
-  const bot = new Telegraf(telegramToken);
+  const agent = new AgentOrchestrator(anthropicKey);
 
-  // 1. Start Command - Matches Python welcome message
-  bot.start((ctx) => {
+  const gateway = ChannelGateway.createFromConfig({
+    telegram: {
+      enabled: Boolean(process.env.TELEGRAM_BOT_TOKEN),
+      botToken: process.env.TELEGRAM_BOT_TOKEN || "",
+      allowFrom: process.env.TELEGRAM_ALLOW_FROM?.split(","),
+      groups: {
+        enabled: Boolean(process.env.TELEGRAM_GROUPS_ENABLED),
+        requireMention: process.env.TELEGRAM_REQUIRE_MENTION === "true",
+        allowList: process.env.TELEGRAM_GROUP_ALLOWLIST?.split(","),
+      },
+    },
+    discord: {
+      enabled: Boolean(process.env.DISCORD_BOT_TOKEN),
+      token: process.env.DISCORD_BOT_TOKEN || "",
+      allowFrom: process.env.DISCORD_ALLOW_FROM?.split(","),
+      groups: {
+        enabled: Boolean(process.env.DISCORD_GROUPS_ENABLED),
+        requireMention: process.env.DISCORD_REQUIRE_MENTION === "true",
+        allowList: process.env.DISCORD_GROUP_ALLOWLIST?.split(","),
+      },
+      guildAllowList: process.env.DISCORD_GUILD_ALLOWLIST?.split(","),
+      dmPolicy: (process.env.DISCORD_DM_POLICY as any) || "pairing",
+    },
+    whatsapp: {
+      enabled: process.env.WHATSAPP_ENABLED === "true",
+      allowFrom: process.env.WHATSAPP_ALLOW_FROM?.split(","),
+      groups: {
+        enabled: Boolean(process.env.WHATSAPP_GROUPS_ENABLED),
+        requireMention: process.env.WHATSAPP_REQUIRE_MENTION === "true",
+        allowList: process.env.WHATSAPP_GROUP_ALLOWLIST?.split(","),
+      },
+      authDir: process.env.WHATSAPP_AUTH_DIR,
+      qrTimeout: parseInt(process.env.WHATSAPP_QR_TIMEOUT || "60"),
+    },
+  });
+
+  agent.setGateway(gateway);
+  setGatewayForTools(gateway);
+
+  await gateway.initializeAll();
+
+  const messageHandler = async (
+    message: NormalizedMessage,
+  ): Promise<string> => {
     logger.info(
-      `Start command triggered by ${ctx.from.first_name} (${ctx.from.id})`,
-    );
-    const welcome = `👋 Hello ${ctx.from.first_name}!
-
-I'm an AI agent powered by Claude. I can help you with:
-
-🌤️ **Weather** - "What's the weather in Tokyo?"
-🔍 **Web Search** - "Search for latest AI news"
-🧮 **Calculations** - "Calculate 15% tip on $87.50"
-📁 **Files** - "Write a Python script to hello.py"
-
-Available commands:
-/start - Show this message
-/clear - Clear conversation history
-/stats - Show bot statistics`;
-    return ctx.reply(welcome, { parse_mode: "Markdown" });
-  });
-
-  // 2. Clear Command - Matches Python clear_command
-  bot.command("clear", async (ctx) => {
-    const userId = ctx.from.id.toString();
-    memory.clearConversation(userId);
-    logger.warn(`Conversation history cleared for user: ${userId}`);
-    await ctx.reply("✅ Conversation history cleared!");
-  });
-
-  // 3. Stats Command - Matches Python stats_command
-  bot.command("stats", async (ctx) => {
-    logger.info(`Stats requested by ${ctx.from.id}`);
-    const stats = noni.getStats();
-    const statsMessage = `📊 **Bot Statistics**
-
-🤖 Model: ${stats.model}
-👥 Total users: ${stats.totalUsers}
-💬 Total messages: ${stats.totalMessages}`;
-    await ctx.reply(statsMessage, { parse_mode: "Markdown" });
-  });
-
-  // 4. Main Message Handler
-  bot.on("text", async (ctx) => {
-    const userId = ctx.from.id.toString();
-    const userMessage = ctx.message.text;
-
-    logger.info(
-      `Received message from ${ctx.from.first_name} (${userId}): ${userMessage.substring(0, 50)}...`,
+      `[${message.channel}] Processing message from user ${message.userId}`,
     );
 
     try {
-      await ctx.sendChatAction("typing");
-      const response = await noni.handleUserMessage(userId, userMessage);
-
-      // 5. Message Splitting - Matches Python logic
-      if (response.length <= 4096) {
-        await ctx.reply(response);
-      } else {
-        logger.info(
-          `Response exceeds 4096 chars, splitting into chunks for ${userId}`,
-        );
-        const chunks = response.match(/.{1,4096}/g) || [];
-        for (const chunk of chunks) {
-          await ctx.reply(chunk);
-        }
-      }
-      logger.success(`Successfully processed message for user ${userId}`);
-    } catch (error) {
-      logger.error(`Error handling message for ${userId}`, error);
-      await ctx.reply(
-        "❌ Sorry, I encountered an error processing your message.",
+      await gateway.sendTyping(
+        message.channel,
+        message.userId,
+        message.groupId,
       );
+
+      // Pass username to orchestrator for identity resolution
+      const response = await agent.handleUserMessage(
+        `${message.channel}:${message.userId}`,
+        message.content,
+        message.username, // ← Key addition: pass username
+      );
+
+      return response;
+    } catch (error) {
+      logger.error(
+        `Error processing message from ${message.channel}:${message.userId}`,
+        error,
+      );
+      return "❌ Sorry, I encountered an error processing your message.";
     }
-  });
+  };
 
-  bot.launch();
-  logger.success("✅ Noni is Online and logging to bot.log");
+  await gateway.startListening(messageHandler);
 
-  process.once("SIGINT", () => {
-    logger.warn("SIGINT received. Shutting down bot...");
-    bot.stop("SIGINT");
-  });
-  process.once("SIGTERM", () => {
-    logger.warn("SIGTERM received. Shutting down bot...");
-    bot.stop("SIGTERM");
-  });
+  logger.success("✅ Noni is Online with Multi-Channel Support");
+  logger.info(
+    `Active channels: ${gateway
+      .getStatus()
+      .map((s) => s.channel)
+      .join(", ")}`,
+  );
+
+  const shutdown = async () => {
+    logger.warn("Received shutdown signal. Closing channels...");
+    await gateway.shutdownAll();
+    process.exit(0);
+  };
+
+  process.once("SIGINT", shutdown);
+  process.once("SIGTERM", shutdown);
 }
 
 start().catch((err) => {

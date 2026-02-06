@@ -1,11 +1,15 @@
+// src/agent/orchestrator.ts
+
 import { LLMInterface } from "./llm";
 import { memory } from "./memory";
 import { TOOL_DEFINITIONS, TOOL_FUNCTIONS } from "../tools";
 import { ContextManager } from "../memory/contextManager";
 import { FactExtractor } from "../memory/factExtractor";
+import { ChannelGateway } from "../channels/gateway";
 import { logger } from "../utils/logger";
 
 export class AgentOrchestrator {
+  private gateway?: ChannelGateway;
   private llm: LLMInterface;
   private contextManager = new ContextManager();
   private extractor: FactExtractor;
@@ -16,26 +20,40 @@ export class AgentOrchestrator {
     this.extractor = new FactExtractor(this.llm);
   }
 
-  /**
-   * Main entry point for messages. Combines Phase 1 tool use
-   * with Phase 2 persistent memory.
-   */
-  async handleUserMessage(userId: string, content: string): Promise<string> {
+  setGateway(gateway: ChannelGateway): void {
+    this.gateway = gateway;
+  }
+
+  async sendCrossChannelMessage(
+    channel: string,
+    userId: string,
+    text: string,
+  ): Promise<void> {
+    if (!this.gateway) {
+      throw new Error("Gateway not initialized");
+    }
+    await this.gateway.sendMessage(channel, userId, text);
+  }
+
+  async handleUserMessage(
+    userId: string,
+    content: string,
+    username?: string,
+  ): Promise<string> {
     try {
       logger.info(
         `Agent processing message for user ${userId}: "${content.substring(0, 50)}..."`,
       );
 
-      // 1. Add current message to Working Memory (RAM)
       memory.addMessage(userId, "user", content);
 
-      // 2. Assemble Context (Identity Files + Long-Term Facts from DB)
-      const dynamicSystemPrompt = await this.contextManager.assembleContext();
+      const dynamicSystemPrompt = await this.contextManager.assembleContext(
+        userId,
+        username,
+      );
 
-      // 3. Get history for this session
       let conversation = memory.getMessagesForLLm(userId, 20);
 
-      // 4. Start the Tool-Execution Loop
       for (let i = 0; i < this.maxIterations; i++) {
         logger.info(`Iteration ${i + 1}/${this.maxIterations}`);
 
@@ -53,8 +71,6 @@ export class AgentOrchestrator {
 
           logger.info(`Final response reached in ${i + 1} iterations`);
 
-          // 5. Phase 2: Async Fact Extraction (Learning)
-          // We don't 'await' this so the user gets their answer immediately
           this.extractor
             .extractAndStoreFacts(userId, conversation)
             .catch((err) => logger.error("Memory Extraction Error:", err));
@@ -125,7 +141,6 @@ export class AgentOrchestrator {
   getStats() {
     return {
       model: "claude-3-5-sonnet-20241022",
-      // We'll pull these from memory just like the Python version
       ...memory.getStats(),
     };
   }
