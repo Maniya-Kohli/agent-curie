@@ -7,6 +7,7 @@ import { NormalizedMessage } from "./channels/base";
 import { logger } from "./utils/logger";
 import { setGatewayForTools } from "./tools";
 import { initializeDatabase } from "./db";
+import { ApiServer } from "./api/server";
 
 dotenv.config();
 
@@ -66,6 +67,11 @@ async function start() {
   agent.setGateway(gateway);
   setGatewayForTools(gateway);
 
+  // Start WebChat API server
+  const apiServer = new ApiServer(agent);
+  apiServer.setGateway(gateway);
+  await apiServer.start();
+
   await gateway.initializeAll();
 
   const messageHandler = async (
@@ -113,6 +119,7 @@ async function start() {
   const shutdown = async () => {
     logger.warn("Received shutdown signal. Closing channels...");
     agent.shutdown();
+    apiServer.shutdown();
     await gateway.shutdownAll();
     process.exit(0);
   };

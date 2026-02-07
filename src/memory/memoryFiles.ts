@@ -105,6 +105,17 @@ export class MemoryFiles {
       }
     }
 
+    // List all .md files in notes/ (searchable via hybrid search)
+    const notesDir = path.join(WORKSPACE_DIR, "notes");
+    if (fs.existsSync(notesDir)) {
+      const entries = fs.readdirSync(notesDir);
+      for (const entry of entries) {
+        if (entry.endsWith(".md")) {
+          files.push(`notes/${entry}`);
+        }
+      }
+    }
+
     return files;
   }
 
@@ -116,7 +127,10 @@ export class MemoryFiles {
     return (
       normalized === "MEMORY.md" ||
       normalized === "USER.md" ||
-      normalized.startsWith("memory/")
+      normalized === "reminders.json" ||
+      normalized.startsWith("memory/") ||
+      normalized.startsWith("notes/") ||
+      normalized.startsWith("skills/")
     );
   }
 

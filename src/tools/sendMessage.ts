@@ -22,14 +22,15 @@ export async function sendMessage(input: {
     directory.resolveContact(input.recipient, input.channel) || input.recipient;
 
   const isSelf = directory.isOwner(`${input.channel}:${actualRecipient}`);
-  const signature = isSelf
-    ? "\n\n— Noni (Your AI Assistant)"
-    : "\n\n— Noni (Maniya's AI Assistant)";
+  // const signature = isSelf
+  //   ? "\n\n— Noni (Your AI Assistant)"
+  //   : "\n\n— Noni (Maniya's AI Assistant)";
 
   await gatewayInstance.sendMessage(
     input.channel,
     actualRecipient,
-    input.message + signature,
+    // input.message + signature,
+    input.message,
   );
   return `✅ Message sent to ${input.recipient}`;
 }

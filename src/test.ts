@@ -74,7 +74,7 @@ async function runTests() {
     console.log("\n[4] Checking Memory Stats:");
     const stats = orchestrator.getStats();
     console.log(`  - Total Users: ${stats.totalUsers}`);
-    console.log(`  - Total Messages in RAM: ${stats.totalMessages}`);
+    console.log(`  - Total Messages in RAM: ${stats.totalMessagesInMemory}`);
   } catch (err) {
     console.error("  ❌ Orchestrator Error:", err);
   }

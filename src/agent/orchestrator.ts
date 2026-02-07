@@ -1,4 +1,3 @@
-//
 // src/agent/orchestrator.ts
 
 import { LLMInterface } from "./llm";
@@ -8,6 +7,7 @@ import { ContextManager } from "../memory/contextManager";
 import { ChannelGateway } from "../channels/gateway";
 import { indexer } from "../memory/indexer";
 import { memoryFiles } from "../memory/memoryFiles";
+import { skillLoader } from "../skills/loader";
 import { logger } from "../utils/logger";
 
 export class AgentOrchestrator {
@@ -40,6 +40,9 @@ export class AgentOrchestrator {
 
     // Build search index
     await indexer.indexAll();
+
+    // Discover and load skills
+    skillLoader.discover();
 
     // Periodic re-index every 5 minutes
     this.reindexInterval = setInterval(
