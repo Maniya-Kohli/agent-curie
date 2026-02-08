@@ -2,7 +2,7 @@
 
 import { LLMInterface } from "./llm";
 import { memory } from "./memory";
-import { TOOL_DEFINITIONS, TOOL_FUNCTIONS } from "../tools";
+import { TOOL_DEFINITIONS, TOOL_FUNCTIONS, setSchedulerUserId } from "../tools";
 import { ContextManager } from "../memory/contextManager";
 import { ChannelGateway } from "../channels/gateway";
 import { indexer } from "../memory/indexer";
@@ -82,6 +82,9 @@ export class AgentOrchestrator {
       logger.info(
         `Agent processing message for user ${userId}: "${content.substring(0, 50)}..."`,
       );
+
+      // Set userId context for scheduler tools
+      setSchedulerUserId(userId);
 
       // Extract channel from userId (format: "channel:id")
       const channel = userId.includes(":") ? userId.split(":")[0] : undefined;

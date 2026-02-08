@@ -64,6 +64,35 @@ export function initializeDatabase(): void {
       ON memory_chunks(source_file);
     CREATE INDEX IF NOT EXISTS idx_chunks_hash 
       ON memory_chunks(chunk_hash);
+
+    CREATE TABLE IF NOT EXISTS scheduled_tasks (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      schedule TEXT NOT NULL,
+      action TEXT NOT NULL,
+      channel TEXT,
+      enabled INTEGER DEFAULT 1,
+      last_run TEXT,
+      next_run TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_sched_next 
+      ON scheduled_tasks(enabled, next_run);
+
+    CREATE TABLE IF NOT EXISTS reminders (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      content TEXT NOT NULL,
+      trigger_at TEXT NOT NULL,
+      channel TEXT,
+      recurring TEXT,
+      completed INTEGER DEFAULT 0,
+      delivered INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_remind_trigger 
+      ON reminders(delivered, trigger_at);
   `);
 
   // FTS5 virtual table for BM25 keyword search

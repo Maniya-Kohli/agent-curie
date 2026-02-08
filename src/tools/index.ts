@@ -18,6 +18,11 @@ import {
   SKILL_TOOL_DEFINITIONS,
   SKILL_TOOL_FUNCTIONS,
 } from "../skills/manager";
+import {
+  SCHEDULER_TOOL_DEFINITIONS,
+  SCHEDULER_TOOL_FUNCTIONS,
+  setSchedulerUserId,
+} from "../scheduler/tools";
 
 const gmail = new GmailTool();
 const calendar = new CalendarTool();
@@ -190,11 +195,12 @@ const CORE_TOOL_DEFINITIONS: Tool[] = [
   },
 ];
 
-// Merge core + memory + skill tools
+// Merge core + memory + skill + scheduler tools
 export const TOOL_DEFINITIONS: Tool[] = [
   ...CORE_TOOL_DEFINITIONS,
   ...MEMORY_TOOL_DEFINITIONS,
   ...SKILL_TOOL_DEFINITIONS,
+  ...SCHEDULER_TOOL_DEFINITIONS,
 ];
 
 // Core tool functions
@@ -223,11 +229,12 @@ const CORE_TOOL_FUNCTIONS: Record<string, Function> = {
   system_exec: execCommand,
 };
 
-// Merge core + memory + skill function handlers
+// Merge core + memory + skill + scheduler function handlers
 export const TOOL_FUNCTIONS: Record<string, Function> = {
   ...CORE_TOOL_FUNCTIONS,
   ...MEMORY_TOOL_FUNCTIONS,
   ...SKILL_TOOL_FUNCTIONS,
+  ...SCHEDULER_TOOL_FUNCTIONS,
 };
 
-export { setGatewayForTools };
+export { setGatewayForTools, setSchedulerUserId };

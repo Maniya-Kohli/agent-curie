@@ -20,11 +20,15 @@ export class ContextManager {
     context += this.loadFile("SOUL.md");
     context += "\n\n";
 
-    // 2. Tools documentation
+    // 2. User Identity (USER.md)
+    context += this.loadFile("USER.md");
+    context += "\n\n";
+
+    // 3. Tools documentation
     context += this.loadFile("TOOLS.md");
     context += "\n\n";
 
-    // 3. Identify who is speaking
+    // 4. Identify who is speaking
     if (userId) {
       const isOwner = directory.isOwner(userId);
       const identity = directory.resolveUserIdentity(userId, username);
