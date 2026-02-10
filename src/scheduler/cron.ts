@@ -32,6 +32,10 @@ type LlmHandler = (
   username?: string,
 ) => Promise<string>;
 
+// Get timezone from environment, default to UTC
+const TIMEZONE =
+  process.env.TZ || process.env.TIMEZONE || "America/Los_Angeles";
+
 class CronScheduler {
   private gateway: ChannelGateway | null = null;
   private llmHandler: LlmHandler | null = null;
@@ -136,7 +140,7 @@ class CronScheduler {
   start(): void {
     if (this.tickInterval) return;
 
-    logger.info("🔄 Cron scheduler started (60s tick)");
+    logger.info(`🔄 Cron scheduler started (60s tick, timezone: ${TIMEZONE})`);
 
     // Recalculate next_run for all enabled tasks on startup
     this.recalculateAllNextRuns();
@@ -159,7 +163,7 @@ class CronScheduler {
 
     const dueTasks = rawDb
       .prepare(
-        `SELECT * FROM scheduled_tasks 
+        `SELECT * FROM scheduled_tasks
          WHERE enabled = 1 AND next_run IS NOT NULL AND next_run <= ?
          ORDER BY next_run ASC`,
       )
@@ -242,13 +246,17 @@ class CronScheduler {
 
   /**
    * Calculate next run time from a schedule string.
+   * Uses the configured timezone from environment.
    * Supports:
    *   - Presets: "daily", "weekly", "weekdays", "monthly"
    *   - Time presets: "daily@08:00", "weekdays@17:00"
    *   - Simple cron: "0 8 * * 1-5" (8am weekdays)
    */
   calculateNextRun(schedule: string): string {
-    const now = new Date();
+    // Get current time in configured timezone
+    const nowInTz = new Date(
+      new Date().toLocaleString("en-US", { timeZone: TIMEZONE }),
+    );
 
     // Parse "preset@HH:MM" format
     const atMatch = schedule.match(/^(\w+)@(\d{2}):(\d{2})$/);
@@ -256,12 +264,12 @@ class CronScheduler {
       const [, preset, hourStr, minStr] = atMatch;
       const hour = parseInt(hourStr);
       const min = parseInt(minStr);
-      return this.nextFromPreset(preset, now, hour, min);
+      return this.nextFromPreset(preset, nowInTz, hour, min);
     }
 
     // Plain presets (default to 8:00 AM)
     if (["daily", "weekly", "weekdays", "monthly"].includes(schedule)) {
-      return this.nextFromPreset(schedule, now, 8, 0);
+      return this.nextFromPreset(schedule, nowInTz, 8, 0);
     }
 
     // Simple cron: "M H * * D" where D can be *, 0-6, or 1-5
@@ -272,17 +280,17 @@ class CronScheduler {
       const min = parseInt(minStr);
 
       if (dayExpr === "*") {
-        return this.nextFromPreset("daily", now, hour, min);
+        return this.nextFromPreset("daily", nowInTz, hour, min);
       }
       if (dayExpr === "1-5") {
-        return this.nextFromPreset("weekdays", now, hour, min);
+        return this.nextFromPreset("weekdays", nowInTz, hour, min);
       }
       // Specific day of week (0=Sun, 6=Sat)
       const targetDay = parseInt(dayExpr);
       if (!isNaN(targetDay)) {
-        const next = new Date(now);
+        const next = new Date(nowInTz);
         next.setHours(hour, min, 0, 0);
-        while (next <= now || next.getDay() !== targetDay) {
+        while (next <= nowInTz || next.getDay() !== targetDay) {
           next.setDate(next.getDate() + 1);
         }
         return next.toISOString();
@@ -290,7 +298,7 @@ class CronScheduler {
     }
 
     // Fallback: tomorrow at 8am
-    const fallback = new Date(now);
+    const fallback = new Date(nowInTz);
     fallback.setDate(fallback.getDate() + 1);
     fallback.setHours(8, 0, 0, 0);
     return fallback.toISOString();

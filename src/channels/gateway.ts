@@ -136,6 +136,9 @@ export class ChannelGateway {
       adapter.getMetadata(),
     );
   }
+  public getAdapters(): Map<string, ChannelAdapter> {
+    return this.adapters;
+  }
 
   /**
    * Helper to create adapters from config

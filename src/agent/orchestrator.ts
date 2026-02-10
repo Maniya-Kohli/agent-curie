@@ -9,6 +9,7 @@ import { indexer } from "../memory/indexer";
 import { memoryFiles } from "../memory/memoryFiles";
 import { skillLoader } from "../skills/loader";
 import { logger } from "../utils/logger";
+import { MessageParam } from "@anthropic-ai/sdk/resources";
 
 export class AgentOrchestrator {
   private gateway?: ChannelGateway;
@@ -97,7 +98,7 @@ export class AgentOrchestrator {
         username,
       );
 
-      let conversation = memory.getMessagesForLLm(userId, 20);
+      let conversation: MessageParam[] = memory.getMessagesForLLm(userId, 20);
 
       for (let i = 0; i < this.maxIterations; i++) {
         logger.info(`Iteration ${i + 1}/${this.maxIterations}`);
@@ -129,7 +130,7 @@ export class AgentOrchestrator {
 
           conversation.push({ role: "assistant", content: response.content });
           const toolResults = await this.executeTools(response);
-          conversation.push({ role: "user", content: toolResults as any });
+          conversation.push({ role: "user", content: toolResults });
           continue;
         }
       }
@@ -139,6 +140,61 @@ export class AgentOrchestrator {
     } catch (error: any) {
       logger.error(`Error in handleUserMessage for ${userId}:`, error);
       return `I encountered an error: ${error.message}`;
+    }
+  }
+
+  /**
+   * Run heartbeat check (called by heartbeat service)
+   */
+  async runHeartbeat(
+    prompt: string,
+    heartbeatContext: string,
+  ): Promise<string> {
+    try {
+      const systemPrompt = await this.contextManager.assembleContext(
+        process.env.OWNER_USER_ID || "whatsapp:14154908789@s.whatsapp.net",
+        "Maniya",
+      );
+
+      const fullSystemPrompt = `${systemPrompt}
+
+## Heartbeat Mode
+
+You are running in **heartbeat mode** - a periodic autonomous check.
+
+${heartbeatContext}`;
+
+      const conversation: MessageParam[] = [{ role: "user", content: prompt }];
+
+      const response = await this.llm.complete(
+        conversation,
+        TOOL_DEFINITIONS,
+        4096,
+        1.0,
+        fullSystemPrompt,
+      );
+
+      // Handle tool use
+      if (response.stop_reason === "tool_use") {
+        conversation.push({ role: "assistant", content: response.content });
+        const toolResults = await this.executeTools(response);
+        conversation.push({ role: "user", content: toolResults });
+
+        const followUp = await this.llm.complete(
+          conversation,
+          TOOL_DEFINITIONS,
+          4096,
+          1.0,
+          fullSystemPrompt,
+        );
+
+        return this.extractTextResponse(followUp);
+      }
+
+      return this.extractTextResponse(response);
+    } catch (error: any) {
+      logger.error(`Heartbeat execution failed: ${error.message}`);
+      return "HEARTBEAT_OK";
     }
   }
 

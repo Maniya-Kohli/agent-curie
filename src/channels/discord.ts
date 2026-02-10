@@ -1,3 +1,4 @@
+//
 // src/channels/discord.ts
 
 import {
@@ -42,7 +43,7 @@ export class DiscordAdapter extends ChannelAdapter {
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.DirectMessages,
       ],
-      partials: [Partials.Channel], // ← Add this
+      partials: [Partials.Channel],
     });
   }
 
@@ -160,6 +161,7 @@ export class DiscordAdapter extends ChannelAdapter {
       isBot: message.author.bot,
       guild: message.guild?.name || "DM",
     });
+
     if (message.author.id === this.botId || message.author.bot) {
       return;
     }
@@ -245,12 +247,11 @@ export class DiscordAdapter extends ChannelAdapter {
         throw new Error("Message handler not initialized");
       }
 
-      const response = await this.messageHandler(normalizedMessage);
-      await message.reply(response);
+      // In gateway mode, just forward the message
+      // Response will come back async via gateway's channel.send
+      await this.messageHandler(normalizedMessage);
 
-      logger.success(
-        `Successfully processed Discord message for user ${userId}`,
-      );
+      logger.success(`Message forwarded to gateway for user ${userId}`);
     } catch (error) {
       logger.error(`Error handling Discord message for ${userId}:`, error);
       await message.reply(

@@ -212,12 +212,13 @@ Available commands:
         throw new Error("Message handler not initialized");
       }
 
-      const response = await this.messageHandler(normalizedMessage);
+      // const response = await this.messageHandler(normalizedMessage);
 
-      await this.sendMessage(userId, {
-        text: response,
-        replyTo: messageId.toString(),
-      });
+      // await this.sendMessage(userId, {
+      //   text: response,
+      //   replyTo: messageId.toString(),
+      // });
+      await this.messageHandler(normalizedMessage);
 
       logger.success(`Successfully processed message for user ${userId}`);
     } catch (error) {
