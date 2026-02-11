@@ -167,6 +167,6 @@ Noni runs an HTTP + WebSocket server alongside messaging channels.
 - **APIs**: Google (Gmail, Calendar), macOS (osascript)
 - **Web**: Native HTTP/WS server, PWA
 
-## License
+## License ||
 
 MIT
