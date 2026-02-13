@@ -1,11 +1,11 @@
-// src/tools/exec.ts
+// src/tools/core/exec.ts
 
 import { exec } from "child_process";
-import { logger } from "../utils/logger";
+import { logger } from "../../utils/logger";
+import { registry } from "../registry";
 
 const TIMEOUT_MS = 15000;
 
-// Only allow specific safe commands
 const ALLOWED_PREFIXES = [
   "osascript",
   "shortcuts",
@@ -17,14 +17,9 @@ const ALLOWED_PREFIXES = [
   "sw_vers",
 ];
 
-/**
- * Execute a shell command on the host Mac.
- * Restricted to safe commands (osascript, shortcuts, etc.)
- */
 export async function execCommand(input: { command: string }): Promise<string> {
   const cmd = input.command.trim();
 
-  // Safety check: only allow whitelisted prefixes
   const firstWord = cmd.split(/\s/)[0].replace(/^\/usr\/bin\//, "");
   if (!ALLOWED_PREFIXES.includes(firstWord)) {
     return `❌ Command not allowed. Permitted: ${ALLOWED_PREFIXES.join(", ")}`;
@@ -46,3 +41,25 @@ export async function execCommand(input: { command: string }): Promise<string> {
     });
   });
 }
+
+// FUTURE: Add permission model - only owner should use system_exec
+registry.register({
+  name: "system_exec",
+  description:
+    "Run a shell command on the host Mac. " +
+    "Input: command string — must start with one of: osascript, shortcuts, open, say, date, cal, whoami, sw_vers. " +
+    "Output: stdout from the command, or 'Error: Command not allowed' if the prefix is not on the allowlist.",
+  category: "system",
+  input_schema: {
+    type: "object",
+    properties: {
+      command: {
+        type: "string",
+        description:
+          "Shell command to execute (must start with: osascript, shortcuts, open, say)",
+      },
+    },
+    required: ["command"],
+  },
+  function: execCommand,
+});

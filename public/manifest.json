@@ -1,6 +1,6 @@
 {
-  "name": "Noni",
-  "short_name": "Noni",
+  "name": "Curie",
+  "short_name": "Curie",
   "description": "Your AI assistant",
   "start_url": "/",
   "display": "standalone",

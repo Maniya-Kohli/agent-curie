@@ -1,9 +1,10 @@
+// src/tools/core/webSearch.ts
+
 import axios from "axios";
+import { registry } from "../registry";
 
 /**
  * Searches the web using the SerpAPI engine.
- * @param query - The search terms to look up.
- * @param numResults - Number of results to return (max 10).
  */
 export const webSearch = async (
   query: string,
@@ -42,3 +43,25 @@ export const webSearch = async (
     return `Error performing search: ${error}`;
   }
 };
+
+registry.register({
+  name: "web_search",
+  description: "Search the web for current information, news, or facts.",
+  category: "core",
+  input_schema: {
+    type: "object",
+    properties: {
+      query: {
+        type: "string",
+        description: "The search query",
+      },
+      numResults: {
+        type: "integer",
+        description: "Number of results to return (default 5)",
+      },
+    },
+    required: ["query"],
+  },
+  function: (args: { query: string; numResults?: number }) =>
+    webSearch(args.query, args.numResults),
+});

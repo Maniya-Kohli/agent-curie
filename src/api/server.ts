@@ -34,7 +34,7 @@ export class ApiServer {
 
   constructor(agent: AgentOrchestrator, port?: number) {
     this.agent = agent;
-    this.port = port || parseInt(process.env.NONI_API_PORT || "3000");
+    this.port = port || parseInt(process.env.CURIE_API_PORT || "3000");
 
     this.httpServer = http.createServer((req, res) =>
       this.handleHttp(req, res),
@@ -249,7 +249,7 @@ export class ApiServer {
     ws.send(
       JSON.stringify({
         type: "connected",
-        message: "Connected to Noni",
+        message: "Connected to ",
         timestamp: new Date().toISOString(),
       }),
     );

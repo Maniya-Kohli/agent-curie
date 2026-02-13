@@ -1,8 +1,11 @@
+// src/tools/core/gmail.ts
+
 import { google, gmail_v1 } from "googleapis";
 import * as fs from "fs/promises";
 import * as path from "path";
 import * as readline from "readline";
-import { logger } from "../utils/logger";
+import { logger } from "../../utils/logger";
+import { registry } from "../registry";
 
 const SCOPES = [
   "https://www.googleapis.com/auth/gmail.send",
@@ -54,7 +57,7 @@ export class GmailTool {
     });
 
     logger.warn(
-      `\n\n🔑 AUTHORIZATION REQUIRED\nVisit this URL to connect your Google account:\n${authUrl}\n`,
+      `\n\n🔐 AUTHORIZATION REQUIRED\nVisit this URL to connect your Google account:\n${authUrl}\n`,
     );
 
     const rl = readline.createInterface({
@@ -84,7 +87,7 @@ export class GmailTool {
       );
     });
   }
-  // --- Send Email ---
+
   async sendEmail(
     to: string,
     subject: string,
@@ -127,7 +130,6 @@ export class GmailTool {
     }
   }
 
-  // --- Read Emails ---
   async readEmails(maxResults: number = 5, query?: string): Promise<string> {
     try {
       const auth = await this.getAuth();
@@ -184,17 +186,20 @@ export class GmailTool {
     }
   }
 
-  // --- Search Emails ---
   async searchEmails(query: string, maxResults: number = 10): Promise<string> {
     return this.readEmails(maxResults, query);
   }
 }
 
-// Tool definitions for Claude API
-export const SEND_EMAIL_TOOL = {
+const gmail = new GmailTool();
+
+registry.register({
   name: "send_email",
   description:
-    "Send an email via Gmail. Can send to one or multiple recipients, with optional CC.",
+    "Send an email via Gmail. " +
+    "Input: to (required, single address), subject (required), body (required), cc (optional, comma-separated). " +
+    "Output: '✅ Email sent successfully! Message ID: <id> To: <to> Subject: <subject>', or an error string.",
+  category: "communication",
   input_schema: {
     type: "object",
     properties: {
@@ -217,48 +222,10 @@ export const SEND_EMAIL_TOOL = {
     },
     required: ["to", "subject", "body"],
   },
-};
-
-export const READ_EMAILS_TOOL = {
-  name: "read_emails",
-  description:
-    "Read recent emails from Gmail inbox. Can retrieve up to 20 recent emails.",
-  input_schema: {
-    type: "object",
-    properties: {
-      max_results: {
-        type: "integer",
-        description: "Number of emails to retrieve (1-20, default: 5)",
-        default: 5,
-      },
-      query: {
-        type: "string",
-        description:
-          "Optional search query to filter emails (e.g., 'from:john@example.com', 'subject:meeting')",
-      },
-    },
-    required: [],
-  },
-};
-
-export const SEARCH_EMAILS_TOOL = {
-  name: "search_emails",
-  description:
-    "Search for specific emails in Gmail using search queries. Supports Gmail search operators like 'from:', 'to:', 'subject:', 'has:attachment', date ranges, etc.",
-  input_schema: {
-    type: "object",
-    properties: {
-      query: {
-        type: "string",
-        description:
-          "Gmail search query (e.g., 'from:john@example.com', 'subject:invoice', 'has:attachment')",
-      },
-      max_results: {
-        type: "integer",
-        description: "Maximum number of results to return (1-20, default: 10)",
-        default: 10,
-      },
-    },
-    required: ["query"],
-  },
-};
+  function: (args: {
+    to: string;
+    subject: string;
+    body: string;
+    cc?: string;
+  }) => gmail.sendEmail(args.to, args.subject, args.body, args.cc),
+});

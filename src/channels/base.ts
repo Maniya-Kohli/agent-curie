@@ -40,7 +40,7 @@ export interface MessageAttachment {
 export interface ChannelResponse {
   text: string;
   attachments?: MessageAttachment[];
-  replyTo?: string; // Message ID to reply to
+  replyTo?: string;
   metadata?: Record<string, any>;
 }
 

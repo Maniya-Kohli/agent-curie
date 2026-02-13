@@ -1,4 +1,3 @@
-//
 // src/channels/discord.ts
 
 import {
@@ -9,7 +8,10 @@ import {
   DMChannel,
   ChannelType,
   Partials,
+  Attachment,
 } from "discord.js";
+import sharp from "sharp";
+import axios from "axios";
 import {
   ChannelAdapter,
   NormalizedMessage,
@@ -17,6 +19,12 @@ import {
   ChannelConfig,
 } from "./base";
 import { logger } from "../utils/logger";
+import {
+  setCurrentUserId,
+  cacheIncomingImage,
+  setCurrentChatId,
+  getCurrentChatId,
+} from "../tools/core/imageOps";
 
 export interface DiscordConfig extends ChannelConfig {
   token: string;
@@ -78,6 +86,55 @@ export class DiscordAdapter extends ChannelAdapter {
       logger.success("Discord bot is now listening for messages");
       resolve();
     });
+  }
+  async sendImage(
+    targetId: string,
+    base64Data: string,
+    caption?: string,
+    mediaType?: string,
+  ): Promise<string> {
+    try {
+      const target = this.parseTarget(targetId);
+
+      const buffer = Buffer.from(base64Data, "base64");
+      const filename =
+        mediaType === "image/png"
+          ? "image.png"
+          : mediaType === "image/webp"
+            ? "image.webp"
+            : "image.jpg";
+
+      const content = caption ? `${caption}` : undefined;
+
+      if (target.type === "user") {
+        const user = await this.client.users.fetch(target.id);
+        const sent = await user.send({
+          content,
+          files: [{ attachment: buffer, name: filename }],
+        });
+        return sent.id;
+      }
+
+      // channel target
+      const channel = await this.client.channels.fetch(target.id);
+      if (
+        channel &&
+        (channel.type === ChannelType.GuildText ||
+          channel.type === ChannelType.DM)
+      ) {
+        const textChannel = channel as TextChannel | DMChannel;
+        const sent = await textChannel.send({
+          content,
+          files: [{ attachment: buffer, name: filename }],
+        });
+        return sent.id;
+      }
+
+      throw new Error(`Invalid Discord target channel: ${target.id}`);
+    } catch (error) {
+      logger.error(`Failed to send Discord image to ${targetId}:`, error);
+      throw error;
+    }
   }
 
   async sendMessage(
@@ -152,6 +209,96 @@ export class DiscordAdapter extends ChannelAdapter {
     });
   }
 
+  /**
+   * Process Discord attachments (images, videos, etc.)
+   */
+  private async processAttachments(
+    attachments: Map<string, Attachment>,
+    userId: string,
+    timestamp: Date,
+  ): Promise<{
+    base64Data?: string;
+    mediaType?: string;
+    attachmentMeta?: any;
+  }> {
+    if (attachments.size === 0) {
+      return {};
+    }
+
+    const attachment = Array.from(attachments.values())[0];
+    const contentType = attachment.contentType?.toLowerCase() || "";
+
+    // Only process images
+    if (!contentType.startsWith("image/")) {
+      return {
+        attachmentMeta: {
+          type: contentType.startsWith("video/") ? "video" : "document",
+          url: attachment.url,
+          filename: attachment.name,
+          size: attachment.size,
+        },
+      };
+    }
+
+    try {
+      logger.info(`Downloading image from Discord: ${attachment.name}`);
+
+      // Download the image
+      const response = await axios.get(attachment.url, {
+        responseType: "arraybuffer",
+        timeout: 30000,
+      });
+
+      const buffer = Buffer.from(response.data);
+
+      // Process with Sharp (resize and compress)
+      const processedBuffer = await sharp(buffer)
+        .resize(1568, 1568, {
+          fit: "inside",
+          withoutEnlargement: true,
+        })
+        .jpeg({ quality: 85 })
+        .toBuffer();
+
+      const base64Data = processedBuffer.toString("base64");
+      const mediaType = "image/jpeg";
+
+      // Cache for save_image tool
+      cacheIncomingImage(`discord:${userId}`, base64Data, mediaType, {
+        timestamp: timestamp.toISOString(),
+        chatId: getCurrentChatId() ?? undefined,
+        channel: "discord",
+      });
+
+      logger.success(
+        `Image processed: ${(base64Data.length / 1024).toFixed(2)} KB`,
+      );
+
+      return {
+        base64Data,
+        mediaType,
+        attachmentMeta: {
+          type: "image",
+          url: attachment.url,
+          filename: attachment.name,
+          size: attachment.size,
+          processed: true,
+        },
+      };
+    } catch (error) {
+      logger.error("Failed to process Discord image:", error);
+      return {
+        attachmentMeta: {
+          type: "image",
+          url: attachment.url,
+          filename: attachment.name,
+          size: attachment.size,
+          error: "Failed to download/process",
+        },
+      };
+    }
+  }
+
   private async handleMessage(message: Message): Promise<void> {
     console.log("[DEBUG] Message received:", {
       content: message.content,
@@ -160,6 +307,7 @@ export class DiscordAdapter extends ChannelAdapter {
       botId: this.botId,
       isBot: message.author.bot,
       guild: message.guild?.name || "DM",
+      attachments: message.attachments.size,
     });
 
     if (message.author.id === this.botId || message.author.bot) {
@@ -172,6 +320,16 @@ export class DiscordAdapter extends ChannelAdapter {
     const isDM = !message.guild;
     const isGuild = Boolean(message.guild);
 
+    // Set current user for imageOps
+    setCurrentUserId(`discord:${userId}`);
+
+    // CRITICAL FIX: Store chatId in the format sendImage expects
+    // Discord sendImage needs "channel:<id>" for channels or "user:<id>" for DMs
+    const chatIdForSending = isDM
+      ? `user:${userId}`
+      : `channel:${message.channel.id}`;
+    setCurrentChatId(chatIdForSending);
+
     if (isDM) {
       const dmPolicy = (this.config as DiscordConfig).dmPolicy || "pairing";
 
@@ -181,7 +339,7 @@ export class DiscordAdapter extends ChannelAdapter {
 
       if (dmPolicy === "pairing" && !this.isUserAllowed(userId)) {
         await message.reply(
-          "🔐 You need to be authorized to DM this bot. Please contact the bot owner.",
+          "🔒 You need to be authorized to DM this bot. Please contact the bot owner.",
         );
         return;
       }
@@ -216,7 +374,7 @@ export class DiscordAdapter extends ChannelAdapter {
     }
 
     logger.info(
-      `Received Discord message from ${message.author.tag} (${userId}): ${messageText.substring(0, 50)}...`,
+      `Received Discord message from ${message.author.tag} (${userId}): ${messageText.substring(0, 50)}... [${message.attachments.size} attachments]`,
     );
 
     await this.sendTypingIndicator(
@@ -224,12 +382,20 @@ export class DiscordAdapter extends ChannelAdapter {
       isGuild ? message.channel.id : undefined,
     );
 
+    // Process attachments if present
+    const { base64Data, mediaType, attachmentMeta } =
+      await this.processAttachments(
+        message.attachments,
+        userId,
+        message.createdAt,
+      );
+
     const normalizedMessage: NormalizedMessage = {
       channel: "discord",
       channelMessageId: message.id,
       userId: userId,
       username: message.author.username,
-      content: messageText,
+      content: messageText || (attachmentMeta ? "[image]" : ""),
       timestamp: message.createdAt,
       isGroup: isGuild,
       groupId: isGuild ? message.channel.id : undefined,
@@ -239,6 +405,13 @@ export class DiscordAdapter extends ChannelAdapter {
         guildId: message.guild?.id,
         guildName: message.guild?.name,
         channelId: message.channel.id,
+        attachment: attachmentMeta
+          ? {
+              ...attachmentMeta,
+              base64Data,
+              mediaType,
+            }
+          : undefined,
       },
     };
 
@@ -247,11 +420,11 @@ export class DiscordAdapter extends ChannelAdapter {
         throw new Error("Message handler not initialized");
       }
 
-      // In gateway mode, just forward the message
-      // Response will come back async via gateway's channel.send
       await this.messageHandler(normalizedMessage);
 
-      logger.success(`Message forwarded to gateway for user ${userId}`);
+      logger.success(
+        `Message forwarded to gateway for user ${userId}${base64Data ? " (with image data)" : ""}`,
+      );
     } catch (error) {
       logger.error(`Error handling Discord message for ${userId}:`, error);
       await message.reply(

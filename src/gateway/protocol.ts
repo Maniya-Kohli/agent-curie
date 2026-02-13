@@ -213,6 +213,12 @@ export interface ChannelSendMessage {
   content: string;
   groupId?: string;
   replyTo?: string;
+  attachment?: {
+    type: "image" | "video" | "document";
+    base64Data: string;
+    mediaType: string;
+    filename?: string;
+  };
 }
 
 export interface ChannelTypingMessage {

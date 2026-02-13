@@ -4,7 +4,7 @@ import * as schema from "./schema";
 import { logger } from "../utils/logger";
 
 // Creates the local SQLite file in your project root
-const sqlite = new Database("noni.db");
+const sqlite = new Database("curie.db");
 
 export const db = drizzle(sqlite, { schema });
 
@@ -18,25 +18,6 @@ export const rawDb = sqlite;
 export function initializeDatabase(): void {
   // Create Drizzle-managed tables
   rawDb.exec(`
-    CREATE TABLE IF NOT EXISTS facts (
-      id TEXT PRIMARY KEY,
-      content TEXT NOT NULL,
-      category TEXT NOT NULL,
-      confidence REAL DEFAULT 1.0,
-      source_type TEXT NOT NULL,
-      source_message TEXT,
-      valid_from INTEGER,
-      valid_until INTEGER,
-      last_referenced INTEGER,
-      reference_count INTEGER DEFAULT 0
-    );
-
-    CREATE TABLE IF NOT EXISTS entities (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      type TEXT NOT NULL,
-      attributes TEXT
-    );
 
     CREATE TABLE IF NOT EXISTS conversation_logs (
       id TEXT PRIMARY KEY,
@@ -93,6 +74,56 @@ export function initializeDatabase(): void {
     );
     CREATE INDEX IF NOT EXISTS idx_remind_trigger 
       ON reminders(delivered, trigger_at);
+      -- Database Migration: Add x402_transactions table
+-- Run this if you already have an existing database
+
+CREATE TABLE IF NOT EXISTS x402_transactions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  url TEXT NOT NULL,
+  amount TEXT NOT NULL,
+  tx_hash TEXT,
+  network_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  requested_at TEXT NOT NULL,
+  settled_at TEXT,
+  metadata TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_x402_user 
+  ON x402_transactions(user_id, requested_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_x402_status 
+  ON x402_transactions(status, requested_at DESC);
+
+  CREATE TABLE IF NOT EXISTS saved_images (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  channel TEXT,
+  chat_id TEXT,
+
+  original_name TEXT,
+  stored_name TEXT NOT NULL,
+  file_path TEXT NOT NULL,
+
+  media_type TEXT NOT NULL,
+  caption TEXT,
+  notes TEXT,
+
+  size_bytes INTEGER,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_saved_images_user
+  ON saved_images(user_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_saved_images_stored
+  ON saved_images(stored_name);
+
+CREATE INDEX IF NOT EXISTS idx_saved_images_original
+  ON saved_images(original_name);
+
+
   `);
 
   // FTS5 virtual table for BM25 keyword search

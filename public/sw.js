@@ -1,4 +1,4 @@
-const CACHE_NAME = "noni-v1";
+const CACHE_NAME = "curie-v1";
 const ASSETS = ["/", "/index.html", "/manifest.json"];
 
 // Install: cache shell assets

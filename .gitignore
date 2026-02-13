@@ -3,7 +3,7 @@
 credentials.json
 token.pickle
 token.json
-noni.db
+curie.db
 .whatsapp-auth/
 
 # Personal workspace files
@@ -11,6 +11,7 @@ workspace/SOUL.md
 workspace/USER.md
 workspace/MEMORY.md
 src/memory/directory.ts
+stored_images
 
 # Node / TypeScript
 node_modules/

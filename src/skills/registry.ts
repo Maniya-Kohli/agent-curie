@@ -5,12 +5,12 @@ import { logger } from "../utils/logger";
 
 /**
  * Builds the skills summary that gets injected into the system prompt.
- * Keeps it compact — only names + descriptions. Full body loaded on demand.
+ * Full body injected so LLM has exact filenames and tool calls without
+ * needing a memory_read call first.
  */
 export class SkillRegistry {
   /**
-   * Build compact XML summary of active skills for system prompt.
-   * Token-efficient: ~100 chars per skill.
+   * Build full skill block for system prompt.
    */
   buildSkillsSummary(): string {
     const active = skillLoader.getActiveSkills();
@@ -18,13 +18,14 @@ export class SkillRegistry {
 
     let summary = "## Available Skills\n\n";
     summary +=
-      "You have specialized skills installed. When a user request matches a skill, ";
-    summary +=
-      'read its full instructions with memory_read("skills/<name>/SKILL.md") before acting.\n\n';
+      "When a user request matches a skill, follow its Steps exactly.\n\n";
     summary += "<skills>\n";
 
     for (const skill of active) {
-      summary += `  <skill name="${skill.meta.name}" version="${skill.meta.version}">${skill.meta.description.trim()}</skill>\n`;
+      summary += `<skill name="${skill.meta.name}">\n`;
+      summary += `${skill.meta.description.trim()}\n\n`;
+      summary += `${skill.body.trim()}\n`;
+      summary += `</skill>\n\n`;
     }
 
     summary += "</skills>\n";

@@ -1,4 +1,4 @@
-// src/scheduler/cron.ts
+// src/scheduler/cron.ts - FIXED VERSION
 
 import { rawDb } from "../db";
 import { ChannelGateway } from "../channels/gateway";
@@ -40,7 +40,7 @@ class CronScheduler {
   private gateway: ChannelGateway | null = null;
   private llmHandler: LlmHandler | null = null;
   private tickInterval: NodeJS.Timeout | null = null;
-  private TICK_MS = 60_000; // check every 60 seconds
+  private TICK_MS = 10_000; // ✅ FIXED: check every 10 seconds for minute-based tasks
 
   setGateway(gateway: ChannelGateway): void {
     this.gateway = gateway;
@@ -50,7 +50,7 @@ class CronScheduler {
     this.llmHandler = handler;
   }
 
-  // ─── CRUD ─────────────────────────────────────────────────────
+  // ─── CRUD ─────────────────────────────────────────────────────────────
 
   create(input: {
     userId: string;
@@ -106,7 +106,7 @@ class CronScheduler {
       ? (rawDb.prepare(sql).all(userId) as any[])
       : (rawDb.prepare(sql).all() as any[]);
 
-    return rows.map(this.rowToTask);
+    return rows.map((row) => this.rowToTask(row));
   }
 
   enable(id: string, enabled: boolean): boolean {
@@ -135,12 +135,12 @@ class CronScheduler {
     return result.changes > 0;
   }
 
-  // ─── EXECUTION ENGINE ─────────────────────────────────────────
+  // ─── EXECUTION ENGINE ─────────────────────────────────────────────────
 
   start(): void {
     if (this.tickInterval) return;
 
-    logger.info(`🔄 Cron scheduler started (60s tick, timezone: ${TIMEZONE})`);
+    logger.info(`🔄 Cron scheduler started (10s tick, timezone: ${TIMEZONE})`);
 
     // Recalculate next_run for all enabled tasks on startup
     this.recalculateAllNextRuns();
@@ -242,17 +242,66 @@ class CronScheduler {
     }
   }
 
-  // ─── SCHEDULE PARSING ─────────────────────────────────────────
+  // ─── SCHEDULE PARSING ─────────────────────────────────────────────────
 
-  /**
-   * Calculate next run time from a schedule string.
-   * Uses the configured timezone from environment.
-   * Supports:
-   *   - Presets: "daily", "weekly", "weekdays", "monthly"
-   *   - Time presets: "daily@08:00", "weekdays@17:00"
-   *   - Simple cron: "0 8 * * 1-5" (8am weekdays)
-   */
   calculateNextRun(schedule: string): string {
+    const lowerSchedule = schedule.toLowerCase().trim();
+
+    // ✅ FIXED: Handle minute-based intervals
+    if (
+      lowerSchedule === "minute" ||
+      lowerSchedule === "every minute" ||
+      lowerSchedule === "everyminute"
+    ) {
+      const next = new Date();
+      next.setMinutes(next.getMinutes() + 1);
+      next.setSeconds(0);
+      next.setMilliseconds(0);
+      return next.toISOString();
+    }
+
+    // ✅ FIXED: Handle standard 5-field cron format
+    // Format: minute hour day month weekday
+    const cronMatch5 = schedule.match(
+      /^(\*|\*\/\d+|\d+)\s+(\*|\d+)\s+(\*|\d+)\s+(\*|\d+)\s+(\*|\d+)$/,
+    );
+    if (cronMatch5) {
+      const [, minField, hourField, dayField, monthField, weekdayField] =
+        cronMatch5;
+
+      // Special case: * * * * * means every minute
+      if (
+        minField === "*" &&
+        hourField === "*" &&
+        dayField === "*" &&
+        monthField === "*" &&
+        weekdayField === "*"
+      ) {
+        const next = new Date();
+        next.setMinutes(next.getMinutes() + 1);
+        next.setSeconds(0);
+        next.setMilliseconds(0);
+        return next.toISOString();
+      }
+
+      // Special case: */N * * * * means every N minutes
+      const intervalMatch = minField.match(/^\*\/(\d+)$/);
+      if (
+        intervalMatch &&
+        hourField === "*" &&
+        dayField === "*" &&
+        monthField === "*" &&
+        weekdayField === "*"
+      ) {
+        const interval = parseInt(intervalMatch[1]);
+        const next = new Date();
+        next.setMinutes(next.getMinutes() + interval);
+        next.setSeconds(0);
+        next.setMilliseconds(0);
+        return next.toISOString();
+      }
+    }
+
     // Get current time in configured timezone
     const nowInTz = new Date(
       new Date().toLocaleString("en-US", { timeZone: TIMEZONE }),
@@ -358,7 +407,7 @@ class CronScheduler {
     }
   }
 
-  // ─── HELPERS ──────────────────────────────────────────────────
+  // ─── HELPERS ──────────────────────────────────────────────────────────
 
   private parseTarget(task: ScheduledTask): {
     channel: string;

@@ -105,8 +105,12 @@ export class ChannelAdapter {
     };
 
     this.send(gatewayMsg);
+
+    const hasMedia = message.metadata?.attachment?.base64Data
+      ? " (with media)"
+      : "";
     logger.info(
-      `→ Forwarded to gateway: ${message.content.substring(0, 50)}...`,
+      `→ Forwarded to gateway: ${message.content.substring(0, 50)}...${hasMedia}`,
     );
   }
 
@@ -145,26 +149,6 @@ export class ChannelAdapter {
     }
   }
 
-  /**
-   * Handle channel.send - deliver message via channel
-   */
-  //   private async handleChannelSend(message: ChannelSendMessage): Promise<void> {
-  //     try {
-  //       await this.channel.sendMessage(
-  //         message.userId,
-  //         message.content,
-  //         message.groupId,
-  //       );
-  //       logger.success(
-  //         `✉️  Delivered via ${this.channelName}: ${message.content.substring(0, 50)}...`,
-  //       );
-  //     } catch (error: any) {
-  //       logger.error(`Failed to send via ${this.channelName}:`, error);
-  //     }
-  //   }
-  /**
-   * Handle channel.send - deliver message via channel
-   */
   /**
    * Handle channel.send - deliver message via channel
    */

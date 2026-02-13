@@ -127,6 +127,8 @@ export class MemoryFiles {
     return (
       normalized === "MEMORY.md" ||
       normalized === "USER.md" ||
+      normalized === "SOUL.md" ||
+      normalized === "HEARTBEAT.md" ||
       normalized === "reminders.json" ||
       normalized.startsWith("memory/") ||
       normalized.startsWith("notes/") ||

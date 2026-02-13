@@ -6,10 +6,12 @@ import makeWASocket, {
   proto,
   makeCacheableSignalKeyStore,
   fetchLatestBaileysVersion,
+  downloadMediaMessage,
 } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
 import * as fs from "fs";
 import * as path from "path";
+import sharp from "sharp";
 import {
   ChannelAdapter,
   NormalizedMessage,
@@ -18,6 +20,11 @@ import {
 } from "./base";
 import { logger } from "../utils/logger";
 import { directory } from "../memory/directory";
+import {
+  setCurrentUserId,
+  cacheIncomingImage,
+  setCurrentChatId,
+} from "../tools/core/imageOps";
 
 // Quiet logger for Baileys
 const QUIET_BAILEYS_LOGGER = {
@@ -93,7 +100,11 @@ export class WhatsAppAdapter extends ChannelAdapter {
     super("whatsapp", config);
     this.authDir = config.authDir || path.join(process.cwd(), ".whatsapp-auth");
     this.qrTimeout = config.qrTimeout || 60;
-    this.triggerWords = config.triggerWords || ["noni", "hey noni", "hi noni"];
+    this.triggerWords = config.triggerWords || [
+      "curie",
+      "hey curie",
+      "hi curie",
+    ];
     this.dmPolicy = config.dmPolicy || "pairing";
     this.selfChatMode = Boolean(config.selfChatMode);
     this.sendReadReceipts =
@@ -165,8 +176,8 @@ export class WhatsAppAdapter extends ChannelAdapter {
 
     try {
       const jid = this.normalizeJid(userId);
-      // Add [Noni] prefix to the response text
-      const prefixedText = `[Noni (AI Agent)] : ${response.text}`;
+      // Add [Curie] prefix to the response text
+      const prefixedText = `[Curie (AI Agent)] : ${response.text}`;
       const chunks = this.splitMessage(prefixedText);
 
       let lastMessageId = "";
@@ -290,20 +301,23 @@ export class WhatsAppAdapter extends ChannelAdapter {
 
       const lowerText = messageText.toLowerCase().trim();
 
+      setCurrentUserId(`whatsapp:${senderE164}`);
+      setCurrentChatId(remoteJid); // ✅ THIS is what sendMessage uses
+
       // Handle pause/stop commands
-      if (lowerText === "noni stop" || lowerText === "noni pause") {
+      if (lowerText === "curie stop" || lowerText === "curie pause") {
         this.pausedUsers.add(remoteJid);
         await this.sendMessage(remoteJid, {
-          text: "⏸️ Paused. Say 'noni start' to resume.",
+          text: "⏸️ Paused. Say 'curie start' to resume.",
         });
         return;
       }
 
       // Handle start/resume commands
       if (
-        lowerText === "noni start" ||
+        lowerText === "curie start" ||
         lowerText === "/start" ||
-        lowerText === "noni resume"
+        lowerText === "curie resume"
       ) {
         this.pausedUsers.delete(remoteJid);
         await this.sendMessage(remoteJid, {
@@ -429,20 +443,30 @@ export class WhatsAppAdapter extends ChannelAdapter {
       }
 
       logger.info(
-        `Received WhatsApp message from ${senderE164}: ${messageText.substring(0, 50)}...`,
+        `Received WhatsApp message from ${senderE164}: ${messageText.substring(0, 50)}... [${attachments ? attachments.length : 0} attachments]`,
       );
+
+      // Set current user for imageOps
+      setCurrentUserId(`whatsapp:${senderE164}`);
 
       await this.sendTypingIndicator(
         remoteJid,
         isGroup ? remoteJid : undefined,
       );
 
+      // Process image attachments if present
+      const { base64Data, mediaType, caption } =
+        await this.processMediaAttachment(msg, senderE164);
+
       const normalizedMessage: NormalizedMessage = {
         channel: "whatsapp",
         channelMessageId: msg.key.id || "",
         userId: senderE164,
         username: senderE164,
-        content: messageText,
+        content:
+          messageText ||
+          caption ||
+          (attachments && attachments.length > 0 ? "[image]" : ""),
         timestamp: new Date((msg.messageTimestamp as number) * 1000),
         isGroup: isGroup,
         groupId: isGroup ? remoteJid : undefined,
@@ -453,6 +477,17 @@ export class WhatsAppAdapter extends ChannelAdapter {
           selfE164,
           isSelf,
           remoteJid,
+          attachment: base64Data
+            ? {
+                type: "image",
+                base64Data,
+                mediaType,
+                caption,
+                processed: true,
+              }
+            : attachments && attachments.length > 0
+              ? attachments[0]
+              : undefined,
         },
       };
 
@@ -464,7 +499,7 @@ export class WhatsAppAdapter extends ChannelAdapter {
         if (this.testMode) {
           // In test mode, send mock response directly
           const response = this.generateTestResponse(messageText);
-          const prefixedResponse = `[Noni (AI Agent)] :  ${response}`;
+          const prefixedResponse = `[Curie (AI Agent)] :  ${response}`;
 
           const sent = await this.sock!.sendMessage(
             remoteJid,
@@ -498,59 +533,13 @@ export class WhatsAppAdapter extends ChannelAdapter {
         await this.sock!.sendMessage(
           remoteJid,
           {
-            text: "[Noni (AI Agent)] : ❌ Sorry, I encountered an error processing your message.",
+            text: "[Curie (AI Agent)] : ❌ Sorry, I encountered an error processing your message.",
           },
           {
             quoted: msg,
           },
         );
       }
-      //   if (!this.messageHandler) {
-      //     throw new Error("Message handler not initialized");
-      //   }
-
-      //   let response: string;
-      //   if (this.testMode) {
-      //     response = this.generateTestResponse(messageText);
-      //   } else {
-      //     response = await this.messageHandler(normalizedMessage);
-      //   }
-
-      //   // Add [Noni] prefix to all responses
-      //   const prefixedResponse = `[Noni (AI Agent)] :  ${response}`;
-
-      //   const sent = await this.sock!.sendMessage(
-      //     remoteJid,
-      //     {
-      //       text: prefixedResponse,
-      //     },
-      //     {
-      //       quoted: msg,
-      //     },
-      //   );
-
-      //   if (sent?.key.id) {
-      //     this.trackOutgoingMessage(sent.key.id);
-      //   }
-
-      //   logger.success(
-      //     `Successfully processed WhatsApp message for ${senderE164}`,
-      //   );
-      // } catch (error) {
-      //   logger.error(
-      //     `Error handling WhatsApp message for ${senderE164}`,
-      //     error,
-      //   );
-      //   await this.sock!.sendMessage(
-      //     remoteJid,
-      //     {
-      //       text: "[Noni (AI Agent)] : ❌ Sorry, I encountered an error processing your message.",
-      //     },
-      //     {
-      //       quoted: msg,
-      //     },
-      //   );
-      // }
     } catch (error) {
       logger.error("Uncaught error in handleMessage:", error);
     }
@@ -598,6 +587,41 @@ export class WhatsAppAdapter extends ChannelAdapter {
       }
     } catch (error) {
       logger.warn("Could not load pairing state:", error);
+    }
+  }
+
+  async sendImage(
+    userId: string,
+    base64Data: string,
+    caption?: string,
+    mediaType?: string,
+  ): Promise<string> {
+    logger.info(
+      `🖼️ WhatsApp sendImage called: userId=${userId}, caption=${caption}, base64Len=${base64Data?.length}, mediaType=${mediaType}`,
+    );
+
+    if (!this.sock) {
+      logger.error("WhatsApp socket not initialized in sendImage");
+      throw new Error("WhatsApp socket not initialized");
+    }
+
+    try {
+      const jid = this.normalizeJid(userId);
+      logger.info(`🖼️ Normalized JID: ${jid}`);
+
+      const buffer = Buffer.from(base64Data, "base64");
+      logger.info(`🖼️ Buffer created: ${buffer.length} bytes`);
+
+      const sent = await this.sock.sendMessage(jid, {
+        image: buffer,
+        caption: caption ? `[Curie] ${caption}` : undefined,
+      });
+
+      logger.success(`🖼️ Image sent successfully! Message ID: ${sent?.key.id}`);
+      return sent?.key.id || "";
+    } catch (error) {
+      logger.error("🖼️ Failed to send WhatsApp image:", error);
+      throw error;
     }
   }
 
@@ -715,6 +739,82 @@ export class WhatsAppAdapter extends ChannelAdapter {
     return `<media:${type}>`;
   }
 
+  /**
+   * Process WhatsApp media attachments (images)
+   */
+  private async processMediaAttachment(
+    msg: WAMessage,
+    userId: string,
+  ): Promise<{ base64Data?: string; mediaType?: string; caption?: string }> {
+    const m = msg.message;
+    if (!m) return {};
+
+    const imageMsg = m.imageMessage;
+    const caption = imageMsg?.caption;
+    const remoteJid = (msg.key as any).remoteJidAlt || msg.key.remoteJid || "";
+
+    // Only process images
+    if (!imageMsg) {
+      return { caption: caption || undefined };
+    }
+
+    try {
+      logger.info("Downloading image from WhatsApp...");
+
+      // Download the media buffer
+      const buffer = await downloadMediaMessage(
+        msg,
+        "buffer",
+        {},
+        {
+          logger: QUIET_BAILEYS_LOGGER as any,
+          reuploadRequest: this.sock!.updateMediaMessage,
+        },
+      );
+
+      if (!buffer || !(buffer instanceof Buffer)) {
+        throw new Error("Failed to download media");
+      }
+
+      // Process with Sharp (resize and compress)
+      const processedBuffer = await sharp(buffer)
+        .resize(1568, 1568, {
+          fit: "inside",
+          withoutEnlargement: true,
+        })
+        .jpeg({ quality: 85 })
+        .toBuffer();
+
+      const base64Data = processedBuffer.toString("base64");
+      const mediaType = "image/jpeg";
+
+      // Cache for save_image tool
+      const timestamp = msg.messageTimestamp
+        ? new Date(Number(msg.messageTimestamp) * 1000).toISOString()
+        : new Date().toISOString();
+
+      // ✅ CRITICAL FIX: Pass remoteJid (the group/chat where message came from)
+      cacheIncomingImage(`whatsapp:${userId}`, base64Data, mediaType, {
+        caption: caption || undefined,
+        timestamp,
+        chatId: remoteJid, // ✅ Use remoteJid directly, not the expression
+        channel: "whatsapp", // ✅ MUST have explicit channel
+      });
+
+      logger.info(
+        `🖼️ Cached image with chatId=${remoteJid}, channel=whatsapp for userId=whatsapp:${userId}`,
+      );
+
+      logger.success(
+        `Image processed: ${(base64Data.length / 1024).toFixed(2)} KB`,
+      );
+
+      return { base64Data, mediaType, caption: caption || undefined };
+    } catch (error) {
+      logger.error("Failed to process WhatsApp image:", error);
+      return { caption: caption || undefined };
+    }
+  }
   private getSenderJid(msg: WAMessage, isGroup: boolean): string {
     if (isGroup) {
       return msg.key.participant || "";
@@ -776,16 +876,6 @@ export class WhatsAppAdapter extends ChannelAdapter {
       return false;
     }
     return true;
-  }
-
-  private toWhatsappJid(number: string): string {
-    const withoutPrefix = number.replace(/^whatsapp:/, "").trim();
-    if (withoutPrefix.includes("@")) {
-      return withoutPrefix;
-    }
-    const e164 = this.normalizeE164(withoutPrefix);
-    const digits = e164.replace(/\D/g, "");
-    return `${digits}@s.whatsapp.net`;
   }
 
   private normalizeE164(value: string): string {
@@ -884,7 +974,7 @@ export class WhatsAppAdapter extends ChannelAdapter {
       logger: QUIET_BAILEYS_LOGGER,
       printQRInTerminal: false,
       qrTimeout: this.qrTimeout * 1000,
-      browser: ["agent-noni", "cli", "1.0.0"],
+      browser: ["agent-curie", "cli", "1.0.0"],
       syncFullHistory: false,
       markOnlineOnConnect: false,
     });

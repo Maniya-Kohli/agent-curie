@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 
 enum LogLevel {
+  DEBUG = "DEBUG",
   INFO = "INFO",
   WARN = "WARN",
   ERROR = "ERROR",
@@ -18,6 +19,7 @@ class Logger {
 
   private colorize(level: LogLevel, message: string): string {
     const colors = {
+      [LogLevel.DEBUG]: "\x1b[35m", // Magenta
       [LogLevel.INFO]: "\x1b[36m", // Cyan
       [LogLevel.WARN]: "\x1b[33m", // Yellow
       [LogLevel.ERROR]: "\x1b[31m", // Red
@@ -29,6 +31,12 @@ class Logger {
 
   private writeToFile(formattedMessage: string) {
     fs.appendFileSync(this.logFile, formattedMessage + "\n");
+  }
+
+  debug(msg: string) {
+    const formatted = this.formatMessage(LogLevel.DEBUG, msg);
+    console.debug(this.colorize(LogLevel.DEBUG, formatted));
+    this.writeToFile(formatted);
   }
 
   info(msg: string) {

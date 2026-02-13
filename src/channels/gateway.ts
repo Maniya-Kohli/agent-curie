@@ -14,6 +14,10 @@ export class ChannelGateway {
   private adapters: Map<string, ChannelAdapter> = new Map();
   private messageHandler?: (message: NormalizedMessage) => Promise<string>;
 
+  getAdapter(channelName: string): ChannelAdapter | undefined {
+    return this.adapters.get(channelName);
+  }
+
   /**
    * Register a channel adapter
    */

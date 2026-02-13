@@ -32,7 +32,7 @@ export class AgentAdapter {
     this.clientInfo = {
       id: "agent-main",
       type: "agent",
-      name: "noni-agent",
+      name: "curie-agent",
       capabilities: ["process", "think", "respond"],
       metadata: {
         model: "claude-sonnet-4-5-20250929",
@@ -109,11 +109,17 @@ export class AgentAdapter {
   /**
    * Handle agent.message - process and respond
    */
+
   private async handleAgentMessage(
     message: AgentMessageMessage,
   ): Promise<void> {
     try {
-      logger.info(`🧠 Processing: ${message.content.substring(0, 50)}...`);
+      const hasMedia = message.metadata?.attachment?.base64Data
+        ? " (with media)"
+        : "";
+      logger.info(
+        `🧠 Processing: ${message.content.substring(0, 50)}...${hasMedia}`,
+      );
 
       // Send typing indicator
       this.send({
@@ -122,11 +128,12 @@ export class AgentAdapter {
         isTyping: true,
       });
 
-      // Process through orchestrator
+      // Process through orchestrator - PASS METADATA
       const response = await this.orchestrator.handleUserMessage(
         message.from,
         message.content,
         message.username,
+        message.metadata, // ← Pass metadata containing attachment
       );
 
       // Send typing indicator off
@@ -143,7 +150,6 @@ export class AgentAdapter {
         content: response,
         metadata: {
           model: "claude-sonnet-4-5-20250929",
-          // TODO: Add token usage, cost from orchestrator
         },
       };
 

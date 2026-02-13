@@ -1,32 +1,35 @@
 // src/agent/orchestrator.ts
 
-import { LLMInterface } from "./llm";
+import {
+  LLMProvider,
+  LLMResponse,
+  MessageParam,
+  createLLMProvider,
+} from "./llmProvider";
 import { memory } from "./memory";
-import { TOOL_DEFINITIONS, TOOL_FUNCTIONS, setSchedulerUserId } from "../tools";
+import { registry } from "../tools/registry";
+import { setSchedulerUserId } from "../scheduler/tools";
 import { ContextManager } from "../memory/contextManager";
 import { ChannelGateway } from "../channels/gateway";
 import { indexer } from "../memory/indexer";
 import { memoryFiles } from "../memory/memoryFiles";
 import { skillLoader } from "../skills/loader";
 import { logger } from "../utils/logger";
-import { MessageParam } from "@anthropic-ai/sdk/resources";
 
 export class AgentOrchestrator {
   private gateway?: ChannelGateway;
-  private llm: LLMInterface;
+  private llm: LLMProvider;
   private contextManager = new ContextManager();
   private maxIterations: number = 10;
   private reindexInterval?: NodeJS.Timeout;
 
-  constructor(apiKey: string) {
-    this.llm = new LLMInterface(apiKey);
+  constructor() {
+    this.llm = createLLMProvider();
+    const info = this.llm.getModelInfo();
+    logger.info(`LLM initialized: ${info.provider}/${info.model}`);
   }
 
-  /**
-   * Initialize memory system: ensure files exist, build search index.
-   */
   async initializeMemory(): Promise<void> {
-    // Ensure workspace/MEMORY.md exists
     const memoryContent = memoryFiles.read("MEMORY.md");
     if (!memoryContent) {
       memoryFiles.write(
@@ -36,16 +39,10 @@ export class AgentOrchestrator {
       logger.info("Created initial MEMORY.md");
     }
 
-    // Ensure today's daily log exists
     memoryFiles.ensureDailyLog();
-
-    // Build search index
     await indexer.indexAll();
-
-    // Discover and load skills
     skillLoader.discover();
 
-    // Periodic re-index every 5 minutes
     this.reindexInterval = setInterval(
       async () => {
         await indexer.reindexDirty();
@@ -68,9 +65,7 @@ export class AgentOrchestrator {
     userId: string,
     text: string,
   ): Promise<void> {
-    if (!this.gateway) {
-      throw new Error("Gateway not initialized");
-    }
+    if (!this.gateway) throw new Error("Gateway not initialized");
     await this.gateway.sendMessage(channel, userId, text);
   }
 
@@ -78,20 +73,37 @@ export class AgentOrchestrator {
     userId: string,
     content: string,
     username?: string,
+    metadata?: any,
   ): Promise<string> {
     try {
+      const { setCurrentUserId, cacheIncomingImage } = await import(
+        "../tools/core/imageOps"
+      );
+      setCurrentUserId(userId);
+
+      const hasMedia = metadata?.attachment?.base64Data ? " (with media)" : "";
       logger.info(
-        `Agent processing message for user ${userId}: "${content.substring(0, 50)}..."`,
+        `Agent processing message for user ${userId}: "${content.substring(0, 50)}..."${hasMedia}`,
       );
 
-      // Set userId context for scheduler tools
       setSchedulerUserId(userId);
 
-      // Extract channel from userId (format: "channel:id")
       const channel = userId.includes(":") ? userId.split(":")[0] : undefined;
 
-      // Persist to SQLite + in-memory
-      memory.addMessage(userId, "user", content, channel);
+      if (metadata?.attachment?.base64Data && metadata?.attachment?.mediaType) {
+        cacheIncomingImage(
+          userId,
+          metadata.attachment.base64Data,
+          metadata.attachment.mediaType,
+          {
+            caption: content,
+            timestamp: new Date().toISOString(),
+          },
+        );
+        logger.info(`Cached image data for user ${userId}`);
+      }
+
+      memory.addMessage(userId, "user", content, channel, metadata);
 
       const dynamicSystemPrompt = await this.contextManager.assembleContext(
         userId,
@@ -100,35 +112,98 @@ export class AgentOrchestrator {
 
       let conversation: MessageParam[] = memory.getMessagesForLLm(userId, 20);
 
+      let initialUserMessage: any;
+
+      if (metadata?.attachment?.base64Data && metadata?.attachment?.mediaType) {
+        logger.info("Building multi-modal message with image data");
+        initialUserMessage = {
+          role: "user" as const,
+          content: [
+            {
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: metadata.attachment.mediaType,
+                data: metadata.attachment.base64Data,
+              },
+            },
+            {
+              type: "text",
+              text: content || "What do you see in this image?",
+            },
+          ],
+        };
+      } else {
+        initialUserMessage = { role: "user" as const, content };
+      }
+
+      const rememberInstruction =
+        "\n\n[SYSTEM: You MUST end every response with this exact block — no exceptions, no variations. Do not mention it in your reply. Do not paraphrase it. Copy the tags exactly:]\n<remember>\nMEMORY: <fact if any new durable info was shared, else omit this line>\nLOG: <one sentence summary of this exchange>\n</remember>";
+
+      if (typeof initialUserMessage.content === "string") {
+        initialUserMessage = {
+          ...initialUserMessage,
+          content: initialUserMessage.content + rememberInstruction,
+        };
+      } else if (Array.isArray(initialUserMessage.content)) {
+        const textPart = initialUserMessage.content.find(
+          (p: any) => p.type === "text",
+        );
+        if (textPart) textPart.text += rememberInstruction;
+      }
+
+      if (
+        conversation.length > 0 &&
+        conversation[conversation.length - 1].role === "user"
+      ) {
+        conversation[conversation.length - 1] = initialUserMessage;
+      } else {
+        conversation.push(initialUserMessage);
+      }
+
+      // ─── Agentic tool loop ────────────────────────────────
+
       for (let i = 0; i < this.maxIterations; i++) {
         logger.info(`Iteration ${i + 1}/${this.maxIterations}`);
 
-        const response = await this.llm.complete(
+        const response: LLMResponse = await this.llm.complete(
           conversation,
-          TOOL_DEFINITIONS,
-          4096,
-          1.0,
-          dynamicSystemPrompt,
+          registry.getDefinitions(),
+          {
+            maxTokens: 4096,
+            temperature: 1.0,
+            system: dynamicSystemPrompt,
+          },
         );
 
-        if (response.stop_reason === "end_turn") {
-          const finalResponse = this.extractTextResponse(response);
-          memory.addMessage(userId, "assistant", finalResponse, channel);
-
+        if (response.type === "text") {
+          const finalText = response.text;
           logger.info(`Final response reached in ${i + 1} iterations`);
+          logger.info(`Response: ${finalText}`);
 
-          return finalResponse;
+          if (!finalText) return "";
+
+          const { clean, memoryFacts, logEntry } =
+            this.parseRememberBlock(finalText);
+
+          memory.addMessage(userId, "assistant", clean, channel);
+
+          for (const fact of memoryFacts) this.writeMemoryFact(fact);
+          if (logEntry) this.writeLogEntry(logEntry);
+
+          return clean;
         }
 
-        if (response.stop_reason === "tool_use") {
-          const toolCalls = response.content.filter(
-            (c: any) => c.type === "tool_use",
-          );
+        if (response.type === "tool_use") {
           logger.info(
-            `Tool usage detected: ${toolCalls.length} tool(s) called`,
+            `Tool usage detected: ${response.toolCalls.length} tool(s) called`,
           );
 
-          conversation.push({ role: "assistant", content: response.content });
+          conversation.push({
+            role: "assistant",
+            content: response.raw.content,
+          });
+
           const toolResults = await this.executeTools(response);
           conversation.push({ role: "user", content: toolResults });
           continue;
@@ -136,121 +211,111 @@ export class AgentOrchestrator {
       }
 
       logger.warn(`Max iterations reached for user ${userId}`);
-      return "I couldn't complete the request within the allowed steps.";
+      return "";
     } catch (error: any) {
       logger.error(`Error in handleUserMessage for ${userId}:`, error);
-      return `I encountered an error: ${error.message}`;
+      return "";
     }
   }
 
-  /**
-   * Run heartbeat check (called by heartbeat service)
-   */
-  async runHeartbeat(
-    prompt: string,
-    heartbeatContext: string,
-  ): Promise<string> {
-    try {
-      const systemPrompt = await this.contextManager.assembleContext(
-        process.env.OWNER_USER_ID || "whatsapp:14154908789@s.whatsapp.net",
-        "Maniya",
+  private async executeTools(response: LLMResponse): Promise<any[]> {
+    const results: any[] = [];
+
+    for (const call of response.toolCalls) {
+      const { name, input, id } = call;
+      logger.info(
+        `Executing tool: ${name} with args: ${JSON.stringify(input)}`,
       );
 
-      const fullSystemPrompt = `${systemPrompt}
-
-## Heartbeat Mode
-
-You are running in **heartbeat mode** - a periodic autonomous check.
-
-${heartbeatContext}`;
-
-      const conversation: MessageParam[] = [{ role: "user", content: prompt }];
-
-      const response = await this.llm.complete(
-        conversation,
-        TOOL_DEFINITIONS,
-        4096,
-        1.0,
-        fullSystemPrompt,
-      );
-
-      // Handle tool use
-      if (response.stop_reason === "tool_use") {
-        conversation.push({ role: "assistant", content: response.content });
-        const toolResults = await this.executeTools(response);
-        conversation.push({ role: "user", content: toolResults });
-
-        const followUp = await this.llm.complete(
-          conversation,
-          TOOL_DEFINITIONS,
-          4096,
-          1.0,
-          fullSystemPrompt,
-        );
-
-        return this.extractTextResponse(followUp);
-      }
-
-      return this.extractTextResponse(response);
-    } catch (error: any) {
-      logger.error(`Heartbeat execution failed: ${error.message}`);
-      return "HEARTBEAT_OK";
-    }
-  }
-
-  private extractTextResponse(response: any): string {
-    const textBlock = response.content.find(
-      (block: any) => block.type === "text",
-    );
-    return textBlock ? textBlock.text : "I have processed your request.";
-  }
-
-  private async executeTools(response: any): Promise<any[]> {
-    const results = [];
-    for (const block of response.content) {
-      if (block.type === "tool_use") {
-        const { name, input, id } = block;
-        logger.info(
-          `Executing tool: ${name} with args: ${JSON.stringify(input)}`,
-        );
-
-        let result;
-        try {
-          if (name in TOOL_FUNCTIONS) {
-            result = await (TOOL_FUNCTIONS as any)[name](input);
-          } else {
-            result = `Error: Unknown tool '${name}'`;
-          }
-        } catch (e: any) {
-          logger.error(`Error executing ${name}:`, e);
-          result = `Error executing ${name}: ${e.message}`;
+      let result: any;
+      try {
+        const tool = registry.getTool(name);
+        if (tool) {
+          result = await tool.function(input);
+        } else {
+          result = `Error: Unknown tool '${name}'`;
         }
-
-        logger.info(
-          `Tool '${name}' result: ${typeof result === "string" ? result.substring(0, 100) : "JSON object"}...`,
-        );
-        results.push({ type: "tool_result", tool_use_id: id, content: result });
+      } catch (e: any) {
+        logger.error(`Error executing ${name}:`, e);
+        result = `Error executing ${name}: ${e.message}`;
       }
+
+      logger.info(
+        `Tool '${name}' result: ${
+          typeof result === "string" ? result.substring(0, 120) : "JSON object"
+        }...`,
+      );
+
+      results.push({ type: "tool_result", tool_use_id: id, content: result });
     }
+
     return results;
+  }
+
+  private parseRememberBlock(text: string): {
+    clean: string;
+    memoryFacts: string[];
+    logEntry?: string;
+  } {
+    const match = text.match(/<remember>([\s\S]*?)<\/remember>/i);
+    if (!match) return { clean: text.trim(), memoryFacts: [] };
+
+    const clean = text.replace(/<remember>[\s\S]*?<\/remember>/i, "").trim();
+    const block = match[1];
+    const memoryFacts = Array.from(block.matchAll(/MEMORY:\s*(.+)/gi))
+      .map((m: any) => m[1].trim())
+      .filter(Boolean);
+    const logMatch = block.match(/LOG:\s*(.+)/i);
+    return { clean, memoryFacts, logEntry: logMatch?.[1]?.trim() };
+  }
+
+  private writeMemoryFact(fact: string): void {
+    try {
+      const existing = memoryFiles.read("MEMORY.md") || "";
+      const date = new Date().toISOString().split("T")[0];
+      const updated =
+        existing.trimEnd() +
+        `
+- ${fact} [${date}]
+`;
+      memoryFiles.write("MEMORY.md", updated);
+      logger.info(`Memory written: ${fact}`);
+    } catch (e: any) {
+      logger.warn("Failed to write memory fact:", e.message);
+    }
+  }
+
+  private writeLogEntry(entry: string): void {
+    try {
+      const time = new Date().toLocaleTimeString("en-US", {
+        timeZone: "America/Los_Angeles",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      memoryFiles.ensureDailyLog();
+      memoryFiles.append(
+        memoryFiles.todayLogPath(),
+        `[${time}] ${entry}
+`,
+      );
+      logger.info(`Daily log written: ${entry}`);
+    } catch (e: any) {
+      logger.warn("Failed to write log entry:", e.message);
+    }
   }
 
   getStats() {
     const memStats = memory.getStats();
     const indexStats = indexer.getStats();
+    const modelInfo = this.llm.getModelInfo();
     return {
-      model: "claude-sonnet-4-5-20250929",
+      model: `${modelInfo.provider}/${modelInfo.model}`,
       ...memStats,
       memoryIndex: indexStats,
     };
   }
 
-  /**
-   * Cleanup on shutdown.
-   */
   shutdown(): void {
-    if (this.reindexInterval) {
-      clearInterval(this.reindexInterval);
-    }
+    if (this.reindexInterval) clearInterval(this.reindexInterval);
   }
 }

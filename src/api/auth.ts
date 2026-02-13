@@ -5,12 +5,12 @@ import { logger } from "../utils/logger";
 
 /**
  * Simple token auth for the API.
- * Token is set via NONI_API_TOKEN env var.
+ * Token is set via CURIE_API_TOKEN env var.
  * If no token is set, API is open (for local-only use).
  */
 
 export function getApiToken(): string | null {
-  return process.env.NONI_API_TOKEN || null;
+  return process.env.CURIE_API_TOKEN || null;
 }
 
 export function isAuthenticated(req: IncomingMessage): boolean {
@@ -36,6 +36,7 @@ export function isAuthenticated(req: IncomingMessage): boolean {
 
 export function unauthorizedResponse(): string {
   return JSON.stringify({
-    error: "Unauthorized. Set NONI_API_TOKEN in .env and pass as Bearer token.",
+    error:
+      "Unauthorized. Set CURIE_API_TOKEN in .env and pass as Bearer token.",
   });
 }

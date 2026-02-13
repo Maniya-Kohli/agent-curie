@@ -17,27 +17,25 @@ export interface SkillMeta {
 
 export interface Skill {
   meta: SkillMeta;
-  dirPath: string; // absolute path to skill directory
-  skillFilePath: string; // absolute path to SKILL.md
-  body: string; // markdown body (after frontmatter)
-  isAvailable: boolean; // requirements met?
+  dirPath: string;
+  skillFilePath: string;
+  body: string;
+  isAvailable: boolean;
   unavailableReason?: string;
 }
 
-const SKILLS_DIR = path.join(process.cwd(), "workspace", "skills");
+// Resolved lazily inside discover() so process.cwd() is correct at call time
+function getSkillsDir(): string {
+  return path.join(process.cwd(), "workspace", "skills");
+}
 
-/**
- * Discovers and loads skills from workspace/skills/.
- * Each skill is a directory containing a SKILL.md with YAML frontmatter.
- */
 export class SkillLoader {
   private skills: Map<string, Skill> = new Map();
 
-  /**
-   * Scan workspace/skills/ and load all SKILL.md files.
-   */
   discover(): Skill[] {
     this.skills.clear();
+
+    const SKILLS_DIR = getSkillsDir();
 
     if (!fs.existsSync(SKILLS_DIR)) {
       fs.mkdirSync(SKILLS_DIR, { recursive: true });
@@ -70,9 +68,6 @@ export class SkillLoader {
     return Array.from(this.skills.values());
   }
 
-  /**
-   * Parse a single SKILL.md file.
-   */
   private loadSkillFile(filePath: string, dirName: string): Skill | null {
     const raw = fs.readFileSync(filePath, "utf-8");
     const { meta, body } = this.parseFrontmatter(raw, dirName);
@@ -82,7 +77,6 @@ export class SkillLoader {
       return null;
     }
 
-    // Validate requirements
     const { available, reason } = this.checkRequirements(meta);
 
     return {
@@ -99,10 +93,6 @@ export class SkillLoader {
     };
   }
 
-  /**
-   * Parse YAML frontmatter from SKILL.md.
-   * Simple parser — no external dependency needed for basic YAML.
-   */
   private parseFrontmatter(
     content: string,
     dirName: string,
@@ -115,7 +105,6 @@ export class SkillLoader {
       requires: { env: [], tools: [] },
     };
 
-    // Check for --- delimiters
     if (!content.startsWith("---")) {
       return { meta: defaults, body: content };
     }
@@ -128,14 +117,13 @@ export class SkillLoader {
     const frontmatter = content.substring(3, endIdx).trim();
     const body = content.substring(endIdx + 3).trim();
 
-    // Simple YAML key-value parser
     const meta = { ...defaults };
+    const lines = frontmatter.split("\n");
 
-    for (const line of frontmatter.split("\n")) {
-      const trimmed = line.trim();
+    for (let i = 0; i < lines.length; i++) {
+      const trimmed = lines[i].trim();
       if (!trimmed || trimmed.startsWith("#")) continue;
 
-      // Handle top-level keys
       const match = trimmed.match(/^(\w+):\s*(.*)$/);
       if (!match) continue;
 
@@ -146,10 +134,19 @@ export class SkillLoader {
         case "name":
           meta.name = cleanValue;
           break;
-        case "description":
-          // Handle multi-line description (>)
-          meta.description = cleanValue.replace(/^>\s*/, "");
+        case "description": {
+          const isBlock = cleanValue === ">" || cleanValue === "|";
+          if (isBlock) {
+            const parts: string[] = [];
+            while (i + 1 < lines.length && lines[i + 1].match(/^\s+\S/)) {
+              parts.push(lines[++i].trim());
+            }
+            meta.description = parts.join(" ");
+          } else {
+            meta.description = cleanValue.replace(/^>\s*/, "");
+          }
           break;
+        }
         case "version":
           meta.version = cleanValue;
           break;
@@ -159,7 +156,6 @@ export class SkillLoader {
       }
     }
 
-    // Parse requires block (simplified)
     const requiresMatch = frontmatter.match(/requires:\s*\n((?:\s+.+\n?)*)/);
     if (requiresMatch) {
       const block = requiresMatch[1];
@@ -183,58 +179,35 @@ export class SkillLoader {
     return { meta, body };
   }
 
-  /**
-   * Check if a skill's requirements are met.
-   */
   private checkRequirements(meta: SkillMeta): {
     available: boolean;
     reason?: string;
   } {
-    // Check env vars
     for (const envVar of meta.requires.env) {
       if (!process.env[envVar]) {
-        return {
-          available: false,
-          reason: `Missing env var: ${envVar}`,
-        };
+        return { available: false, reason: `Missing env var: ${envVar}` };
       }
     }
-
     return { available: true };
   }
 
-  /**
-   * Get all active skills (enabled + requirements met).
-   */
   getActiveSkills(): Skill[] {
     return Array.from(this.skills.values()).filter((s) => s.isAvailable);
   }
 
-  /**
-   * Get all skills regardless of status.
-   */
   getAllSkills(): Skill[] {
     return Array.from(this.skills.values());
   }
 
-  /**
-   * Get a skill by name.
-   */
   getSkill(name: string): Skill | undefined {
     return this.skills.get(name);
   }
 
-  /**
-   * Get the full SKILL.md body for a skill (for prompt injection).
-   */
   getSkillBody(name: string): string {
     const skill = this.skills.get(name);
     return skill ? skill.body : "";
   }
 
-  /**
-   * Enable or disable a skill by writing to its SKILL.md frontmatter.
-   */
   setEnabled(name: string, enabled: boolean): boolean {
     const skill = this.skills.get(name);
     if (!skill) return false;
@@ -245,13 +218,11 @@ export class SkillLoader {
       if (content.match(/^enabled:\s*.+$/m)) {
         content = content.replace(/^enabled:\s*.+$/m, `enabled: ${enabled}`);
       } else {
-        // Add enabled field after the first ---
         content = content.replace(/^---\n/, `---\nenabled: ${enabled}\n`);
       }
 
       fs.writeFileSync(skill.skillFilePath, content, "utf-8");
 
-      // Update in-memory state
       skill.meta.enabled = enabled;
       skill.isAvailable = enabled && !skill.unavailableReason;
 
@@ -263,9 +234,6 @@ export class SkillLoader {
     }
   }
 
-  /**
-   * Reload all skills from disk.
-   */
   reload(): Skill[] {
     return this.discover();
   }

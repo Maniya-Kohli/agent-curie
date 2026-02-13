@@ -1,10 +1,13 @@
+// src/tools/core/calendar.ts
+
 import { google, calendar_v3 } from "googleapis";
 import * as chrono from "chrono-node";
-import { addMinutes, format, parseISO } from "date-fns";
+import { addMinutes, format, parseISO, startOfDay, endOfDay } from "date-fns";
 import * as fs from "fs/promises";
 import * as path from "path";
 import * as readline from "readline";
-import { logger } from "../utils/logger";
+import { logger } from "../../utils/logger";
+import { registry } from "../registry";
 
 const SCOPES = [
   "https://www.googleapis.com/auth/calendar",
@@ -47,6 +50,7 @@ export class CalendarTool {
       );
     }
   }
+
   private async getNewToken(oAuth2Client: any): Promise<any> {
     const authUrl = oAuth2Client.generateAuthUrl({
       access_type: "offline",
@@ -54,7 +58,7 @@ export class CalendarTool {
     });
 
     logger.warn(
-      `\n\n🔑 AUTHORIZATION REQUIRED\nVisit this URL to connect your Google account:\n${authUrl}\n`,
+      `\n\n🔐 AUTHORIZATION REQUIRED\nVisit this URL to connect your Google account:\n${authUrl}\n`,
     );
 
     const rl = readline.createInterface({
@@ -84,12 +88,11 @@ export class CalendarTool {
       );
     });
   }
-  // --- Natural Language Parsing ---
+
   private parseDatetime(dateStr: string): Date {
     const results = chrono.parseDate(dateStr);
     if (results) return results;
 
-    // Handle relative dates
     const lower = dateStr.toLowerCase();
     const now = new Date();
 
@@ -108,7 +111,6 @@ export class CalendarTool {
     return new Date(now.setHours(9, 0, 0, 0));
   }
 
-  // --- Create Event ---
   async createEvent(
     title: string,
     startTime: string,
@@ -146,9 +148,7 @@ export class CalendarTool {
       let result = `✅ Event created successfully!\n`;
       result += `📅 ${title}\n`;
       result += `🕐 ${format(startDt, "yyyy-MM-dd hh:mm a")} - ${format(endDt, "hh:mm a")}\n`;
-      if (location) {
-        result += `📍 ${location}\n`;
-      }
+      if (location) result += `📍 ${location}\n`;
       result += `\n🔗 ${res.data.htmlLink || "N/A"}`;
 
       return result;
@@ -157,7 +157,25 @@ export class CalendarTool {
     }
   }
 
-  // --- View Events ---
+  async deleteEvent(eventId: string): Promise<string> {
+    try {
+      const auth = await this.getAuth();
+
+      await this.calendar.events.delete({
+        auth,
+        calendarId: "primary",
+        eventId: eventId,
+      });
+
+      return `✅ Event deleted successfully!`;
+    } catch (error: any) {
+      if (error.code === 404) {
+        return `❌ Event not found. It may have already been deleted.`;
+      }
+      return `Error deleting event: ${error.message}`;
+    }
+  }
+
   async viewEvents(
     daysAhead: number = 7,
     maxResults: number = 10,
@@ -165,12 +183,29 @@ export class CalendarTool {
     try {
       const auth = await this.getAuth();
       const now = new Date();
-      const timeMax = new Date(now.getTime() + daysAhead * 24 * 60 * 60 * 1000);
+
+      // FIX: When daysAhead is 0 (today), we want from start of today to end of today
+      // When daysAhead is 1 (tomorrow), from start of tomorrow to end of tomorrow, etc.
+      let timeMin: Date;
+      let timeMax: Date;
+
+      if (daysAhead === 0) {
+        // Today: from start of day to end of day
+        timeMin = startOfDay(now);
+        timeMax = endOfDay(now);
+      } else {
+        // Future days: from now to end of that future day
+        timeMin = now;
+        const futureDate = new Date(
+          now.getTime() + daysAhead * 24 * 60 * 60 * 1000,
+        );
+        timeMax = endOfDay(futureDate);
+      }
 
       const res = await this.calendar.events.list({
         auth,
         calendarId: "primary",
-        timeMin: now.toISOString(),
+        timeMin: timeMin.toISOString(),
         timeMax: timeMax.toISOString(),
         maxResults,
         singleEvents: true,
@@ -190,16 +225,13 @@ export class CalendarTool {
 
         output += `${i + 1}. ${event.summary}\n`;
         output += `   🕐 ${format(startDt, "EEEE, MMMM dd 'at' hh:mm a")}\n`;
+        output += `   🆔 Event ID: ${event.id}\n`;
 
-        if (event.location) {
-          output += `   📍 ${event.location}\n`;
-        }
-
+        if (event.location) output += `   📍 ${event.location}\n`;
         if (event.description) {
           const desc = event.description.substring(0, 100);
           output += `   📝 ${desc}...\n`;
         }
-
         output += "\n";
       });
 
@@ -208,127 +240,90 @@ export class CalendarTool {
       return `Error viewing events: ${error}`;
     }
   }
-
-  // --- Check Availability ---
-  async checkAvailability(
-    dateTime: string,
-    durationMinutes: number = 60,
-  ): Promise<string> {
-    try {
-      const auth = await this.getAuth();
-      const checkDt = this.parseDatetime(dateTime);
-      const endDt = addMinutes(checkDt, durationMinutes);
-
-      const res = await this.calendar.events.list({
-        auth,
-        calendarId: "primary",
-        timeMin: checkDt.toISOString(),
-        timeMax: endDt.toISOString(),
-        singleEvents: true,
-        orderBy: "startTime",
-      });
-
-      const events = res.data.items || [];
-
-      if (events.length === 0) {
-        return (
-          `✅ You're free!\n` +
-          `📅 ${format(checkDt, "EEEE, MMMM dd 'at' hh:mm a")}\n` +
-          `⏱️ For ${durationMinutes} minutes`
-        );
-      } else {
-        const conflicts = events.map((e) => `   • ${e.summary}`).join("\n");
-        return (
-          `❌ Conflict found:\n` +
-          `📅 ${format(checkDt, "EEEE, MMMM dd 'at' hh:mm a")}\n` +
-          `Conflicts with:\n${conflicts}`
-        );
-      }
-    } catch (error) {
-      return `Error checking availability: ${error}`;
-    }
-  }
 }
 
-// Tool definitions for Claude API
-export const CREATE_EVENT_TOOL = {
+const calendar = new CalendarTool();
+
+registry.register({
   name: "create_event",
   description:
-    "Create a new calendar event in Google Calendar. Can specify title, time, duration, location, and attendees.",
+    "Create a Google Calendar event. " +
+    "Input: title (required), startTime in natural language e.g. 'tomorrow at 2pm' (required), " +
+    "durationMinutes (default 60), description, location, attendees as comma-separated emails. " +
+    "Output: confirmation string with event link, or an error.",
+  category: "communication",
   input_schema: {
     type: "object",
     properties: {
-      title: {
+      title: { type: "string", description: "Event title" },
+      startTime: {
         type: "string",
-        description: "Event title/name",
+        description: "Start time (e.g., 'tomorrow at 2pm')",
       },
-      start_time: {
-        type: "string",
-        description:
-          "Start time (flexible formats: '2024-03-20 14:00', 'tomorrow at 2pm', 'next Monday at 9am')",
-      },
-      duration_minutes: {
+      durationMinutes: {
         type: "integer",
-        description: "Event duration in minutes (default: 60)",
-        default: 60,
+        description: "Duration in minutes (default 60)",
       },
-      description: {
-        type: "string",
-        description: "Event description/notes (optional)",
-      },
-      location: {
-        type: "string",
-        description: "Event location (optional)",
-      },
+      description: { type: "string", description: "Optional notes" },
+      location: { type: "string", description: "Optional location" },
       attendees: {
         type: "string",
-        description: "Comma-separated email addresses of attendees (optional)",
+        description: "Optional comma-separated emails",
       },
     },
-    required: ["title", "start_time"],
+    required: ["title", "startTime"],
   },
-};
+  function: (args: any) =>
+    calendar.createEvent(
+      args.title,
+      args.startTime,
+      args.durationMinutes,
+      args.description,
+      args.location,
+      args.attendees,
+    ),
+});
 
-export const VIEW_EVENTS_TOOL = {
+registry.register({
   name: "view_events",
   description:
-    "View upcoming events from Google Calendar. Shows events for the next 7 days by default.",
+    "Fetch upcoming Google Calendar events. " +
+    "Input: daysAhead (default 7, pass 0 for today only), maxResults (default 10). " +
+    "Output: list of events with title, time, and eventId. " +
+    "eventId values from this output are required by delete_event.",
+  category: "communication",
   input_schema: {
     type: "object",
     properties: {
-      days_ahead: {
+      daysAhead: {
         type: "integer",
-        description: "Number of days to look ahead (default: 7)",
-        default: 7,
+        description: "Days to look ahead (default 7, use 0 for today only)",
       },
-      max_results: {
+      maxResults: {
         type: "integer",
-        description: "Maximum number of events to show (default: 10)",
-        default: 10,
+        description: "Max events to show (default 10)",
       },
     },
-    required: [],
   },
-};
+  function: (args: any) => calendar.viewEvents(args.daysAhead, args.maxResults),
+});
 
-export const CHECK_AVAILABILITY_TOOL = {
-  name: "check_availability",
+registry.register({
+  name: "delete_event",
   description:
-    "Check if a specific time slot is available in the calendar. Useful for scheduling meetings.",
+    "Delete a Google Calendar event by ID. " +
+    "Input: eventId — get this from view_events output. " +
+    "Output: confirmation or not-found error.",
+  category: "communication",
   input_schema: {
     type: "object",
     properties: {
-      date_time: {
+      eventId: {
         type: "string",
-        description:
-          "Date and time to check (e.g., '2024-03-20 14:00', 'tomorrow at 2pm', 'Friday at 3pm')",
-      },
-      duration_minutes: {
-        type: "integer",
-        description: "Duration to check in minutes (default: 60)",
-        default: 60,
+        description: "The Google Calendar event ID (obtained from view_events)",
       },
     },
-    required: ["date_time"],
+    required: ["eventId"],
   },
-};
+  function: (args: any) => calendar.deleteEvent(args.eventId),
+});

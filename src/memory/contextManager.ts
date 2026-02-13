@@ -2,9 +2,6 @@
 
 import * as fs from "fs";
 import * as path from "path";
-import { db } from "../db";
-import { facts } from "../db/schema";
-import { desc } from "drizzle-orm";
 import { directory } from "./directory";
 import { memoryFiles } from "./memoryFiles";
 import { skillRegistry } from "../skills/registry";
@@ -16,30 +13,34 @@ export class ContextManager {
   async assembleContext(userId?: string, username?: string): Promise<string> {
     let context = "";
 
-    // 1. Agent Identity (SOUL.md — persona + memory instructions)
+    // 1. Core identity
     context += this.loadFile("SOUL.md");
     context += "\n\n";
 
-    // 2. User Identity (USER.md)
-    context += this.loadFile("USER.md");
+    // 2. Workspace rules, memory discipline, skill authoring guidance
+    context += this.loadFile("AGENTS.md");
     context += "\n\n";
 
-    // 3. Tools documentation
-    context += this.loadFile("TOOLS.md");
-    context += "\n\n";
+    // 3. Current date — needed for daily log paths
+    const now = new Date();
+    const dateStr = now.toISOString().split("T")[0]; // YYYY-MM-DD
+    const timeStr = now.toLocaleTimeString("en-US", {
+      timeZone: "America/Los_Angeles",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    context += `Current date: ${dateStr} | Local time: ${timeStr} (PST/PDT)\n\n`;
 
-    // 4. Identify who is speaking
+    // 4. Who is speaking + their profile and memory access
     if (userId) {
       const isOwner = directory.isOwner(userId);
       const identity = directory.resolveUserIdentity(userId, username);
 
       if (isOwner) {
-        // Load full user profile (static + dynamic sections)
         context += this.loadFile("USER.md");
-        context +=
-          "\n\nYou are currently speaking with Maniya (your owner).\n\n";
+        const ownerName = username || identity.split(" ")[0];
+        context += `\n\nYou are currently speaking with your owner, ${ownerName}.\n\n`;
 
-        // 4. Long-term memory — ONLY for owner/private sessions
         const memoryContent = memoryFiles.read("MEMORY.md");
         if (memoryContent) {
           context += "## Long-Term Memory\n";
@@ -48,53 +49,32 @@ export class ContextManager {
         }
       } else {
         context += `\n\nYou are currently speaking with: ${identity}\n`;
-        context += `This is NOT your owner. Respond professionally and helpfully.\n`;
-        context += `Do NOT load or share personal memories with non-owner users.\n\n`;
       }
     }
 
-    // 5. Daily logs — today + yesterday (always loaded for continuity)
+    // 5. Daily logs — today + yesterday for continuity
     const todayLog = memoryFiles.read(memoryFiles.todayLogPath());
     const yesterdayLog = memoryFiles.read(memoryFiles.yesterdayLogPath());
 
     if (todayLog || yesterdayLog) {
       context += "## Recent Daily Context\n";
       if (yesterdayLog) {
-        context += `### Yesterday (${memoryFiles.yesterdayLogPath()})\n`;
+        context += `### Yesterday\n`;
         context += yesterdayLog;
         context += "\n\n";
       }
       if (todayLog) {
-        context += `### Today (${memoryFiles.todayLogPath()})\n`;
+        context += `### Today\n`;
         context += todayLog;
         context += "\n\n";
       }
     }
 
-    // 6. Skills summary — compact list of active skills
+    // 6. Skills — full body injected so LLM has exact filenames and args
     const skillsSummary = skillRegistry.buildSkillsSummary();
     if (skillsSummary) {
       context += skillsSummary;
       context += "\n\n";
-    }
-
-    // 7. Legacy facts (backward compat)
-    try {
-      const recentFacts = await db
-        .select()
-        .from(facts)
-        .orderBy(desc(facts.validFrom))
-        .limit(5);
-
-      if (recentFacts.length > 0) {
-        context += "## Legacy Memories (from database):\n";
-        recentFacts.forEach((fact) => {
-          context += `- ${fact.content}\n`;
-        });
-        context += "\n";
-      }
-    } catch (error) {
-      // Silently skip if facts table has issues
     }
 
     return context;

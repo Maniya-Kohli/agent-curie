@@ -1,7 +1,7 @@
 // src/scheduler/triggers.ts
 
 import { ChannelGateway } from "../channels/gateway";
-import { CalendarTool } from "../tools/calendar";
+import { CalendarTool } from "../tools/core/calendar";
 import { logger } from "../utils/logger";
 
 type LlmHandler = (
