@@ -5,7 +5,7 @@ An AI agent that actually does things. Runs on your Mac, talks on WhatsApp/Teleg
 ## What It Does
 
 - **Multi-Channel**: Telegram, Discord, WhatsApp — same brain, same memory across all
-- **Persistent Memory**: Markdown files as source of truth (MEMORY.md for long-term knowledge, daily logs for running context) backed by SQLite hybrid search combining BM25 keyword matching and vector embeddings. Survives restarts, searchable across all history.
+- **Persistent Memory**: Markdown files as source of truth — MEMORY.md for long-term knowledge, daily logs for running context. Backed by SQLite hybrid search combining BM25 keyword matching and vector embeddings (OpenAI text-embedding-3-small), scores merged via 0.7 × vector + 0.3 × BM25. Facts are written with timestamps and updated as they change, enabling temporal intelligence. The LLM writes memory directly — no extraction pipeline. Survives restarts, searchable across all history.
 - **Skills Framework**: Extensible via `SKILL.md` files. Curie can create its own skills at runtime
 - **Native macOS Integration**: Controls Apple Reminders, Notes, and other apps via AppleScript
 - **WebChat + PWA**: Browser-based chat UI, installable on iPhone as a home screen app
