@@ -24,6 +24,25 @@ npm run dev
 
 Curie starts all channels + WebChat server on `http://localhost:3000`.
 
+## Google Setup (Gmail & Calendar)
+
+Gmail and Calendar require OAuth. Run this **once before starting Curie**:
+
+```bash
+npx ts-node scripts/authorize-google.ts
+```
+
+This will:
+
+1. Print an authorization URL
+2. Open it in your browser and approve access
+3. Copy the **full redirect URL** from your browser address bar (the `http://localhost/?code=...` URL)
+4. Paste it into the terminal prompt
+
+A `token.json` file will be created in the project root. Curie will use it automatically from then on.
+
+> **Note:** If you see `invalid_grant` errors, your token has expired. Re-run the script above to refresh it.
+
 ## Architecture
 
 ```
