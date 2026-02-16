@@ -209,6 +209,6 @@ Curie supports [Coinbase x402](https://x402.org) for autonomous micropayments:
 - **APIs**: Google (Gmail, Calendar), macOS (osascript), Coinbase (x402)
 - **Web**: Native HTTP/WS server, PWA
 
-## License
+## License ||
 
 MIT
